@@ -1,0 +1,43 @@
+{
+  "name": "eter-poetry-backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "dev": "npm run db:up && npm run start:dev",
+    "lint": "eslint \"src/**/*.ts\"",
+    "typeorm": "ts-node ./node_modules/typeorm/cli.js -d src/database/data-source.ts",
+    "migration:create": "npm run typeorm -- migration:create src/database/migrations/$npm_config_name",
+    "migration:run": "npm run typeorm -- migration:run",
+    "migration:revert": "npm run typeorm -- migration:revert",
+    "db:up": "docker compose -f docker-compose.dev.yml up -d postgres",
+    "db:down": "docker compose -f docker-compose.dev.yml down",
+    "db:logs": "docker compose -f docker-compose.dev.yml logs -f postgres"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.4.8",
+    "@nestjs/config": "^3.3.0",
+    "@nestjs/core": "^10.4.8",
+    "@nestjs/platform-express": "^10.4.8",
+    "@nestjs/typeorm": "^10.0.2",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "pg": "^8.13.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "typeorm": "^0.3.20"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.8",
+    "@nestjs/schematics": "^10.2.3",
+    "@nestjs/testing": "^10.4.8",
+    "@types/node": "^22.8.1",
+    "eslint": "^9.12.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}
