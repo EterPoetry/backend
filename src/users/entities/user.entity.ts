@@ -14,6 +14,7 @@ import { Subscription } from '../../subscriptions/entities/subscription.entity';
 import { PostComplaint } from '../../complaints/entities/post-complaint.entity';
 import { Follower } from '../../followers/entities/follower.entity';
 import { Notification } from '../../notifications/entities/notification.entity';
+import { RefreshToken } from '../../auth/entities/refresh-token.entity';
 
 @Entity({ name: 'users' })
 export class User {
@@ -26,8 +27,17 @@ export class User {
   @Column({ name: 'email', type: 'varchar', length: 320, unique: true })
   email: string;
 
-  @Column({ name: 'password', type: 'varchar', length: 255 })
-  password: string;
+  @Column({ name: 'password', type: 'varchar', length: 255, nullable: true })
+  password: string | null;
+
+  @Column({ name: 'google_id', type: 'varchar', length: 255, unique: true, nullable: true })
+  googleId: string | null;
+
+  @Column({ name: 'reset_password_token_hash', type: 'varchar', length: 64, nullable: true })
+  resetPasswordTokenHash: string | null;
+
+  @Column({ name: 'reset_password_expires_at', type: 'timestamptz', nullable: true })
+  resetPasswordExpiresAt: Date | null;
 
   @Column({ name: 'photo', type: 'varchar', length: 500, nullable: true })
   photo: string | null;
@@ -77,4 +87,7 @@ export class User {
 
   @OneToMany(() => Notification, (notification) => notification.user)
   notifications: Notification[];
+
+  @OneToMany(() => RefreshToken, (refreshToken) => refreshToken.user)
+  refreshTokens: RefreshToken[];
 }

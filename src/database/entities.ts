@@ -7,12 +7,13 @@ import { PostReaction } from '../reactions/entities/post-reaction.entity';
 import { PostComment } from '../comments/entities/post-comment.entity';
 import { CommentReaction } from '../reactions/entities/comment-reaction.entity';
 import { Subscription } from '../subscriptions/entities/subscription.entity';
-import { Card } from '../subscriptions/entities/card.entity';
 import { Transaction } from '../subscriptions/entities/transaction.entity';
+import { Card } from '../subscriptions/entities/card.entity';
 import { Admin } from '../admin/entities/admin.entity';
 import { PostComplaint } from '../complaints/entities/post-complaint.entity';
 import { Follower } from '../followers/entities/follower.entity';
 import { Notification } from '../notifications/entities/notification.entity';
+import { RefreshToken } from '../auth/entities/refresh-token.entity';
 
 export const ENTITIES = [
   User,
@@ -24,10 +25,11 @@ export const ENTITIES = [
   PostComment,
   CommentReaction,
   Subscription,
-  Card,
   Transaction,
+  Card,
   Admin,
   PostComplaint,
   Follower,
   Notification,
+  RefreshToken,
 ];
