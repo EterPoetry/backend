@@ -8,8 +8,8 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { SubscriptionStatus } from '../../common/enums/subscription-status.enum';
-import { Card } from './card.entity';
 import { Transaction } from './transaction.entity';
+import { Card } from './card.entity';
 
 @Entity({ name: 'subscriptions' })
 export class Subscription {
