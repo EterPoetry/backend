@@ -297,7 +297,6 @@ export class AuthService {
     }
 
     url.searchParams.set('accessToken', authResponse.accessToken);
-    url.searchParams.set('refreshToken', authResponse.refreshToken);
     return url.toString();
   }
 

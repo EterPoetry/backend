@@ -8,14 +8,14 @@ import {
   Redirect,
   Req,
   Res,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService, AuthResponse } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
@@ -41,30 +41,66 @@ export class AuthController {
     @Res() res: Response,
   ): Promise<void> {
     const authResponse = await this.authService.googleCallback(code);
+    this.setRefreshCookie(res, authResponse.refreshToken);
     const redirectUrl = this.authService.getGoogleFrontendRedirectUrl(authResponse);
     if (redirectUrl) {
       res.redirect(302, redirectUrl);
       return;
     }
-
-    res.status(200).json(authResponse);
+    const { refreshToken, ...response } = authResponse;
+    res.status(200).json(response);
   }
 
   @Post('register')
-  async register(@Body() dto: RegisterDto): Promise<AuthResponse> {
-    return this.authService.register(dto);
+  async register(
+    @Body() dto: RegisterDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Omit<AuthResponse, 'refreshToken'>> {
+    const authData = await this.authService.register(dto);
+    this.setRefreshCookie(res, authData.refreshToken);
+    const { refreshToken, ...response } = authData;
+    return response;
   }
 
   @Post('login')
   @HttpCode(200)
-  async login(@Body() dto: LoginDto): Promise<AuthResponse> {
-    return this.authService.login(dto);
+  async login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Omit<AuthResponse, 'refreshToken'>> {
+    const authData = await this.authService.login(dto);
+    this.setRefreshCookie(res, authData.refreshToken);
+    const { refreshToken, ...response } = authData;
+    return response;
   }
 
   @Post('refresh')
   @HttpCode(200)
-  async refresh(@Body() dto: RefreshTokenDto): Promise<AuthResponse> {
-    return this.authService.refresh(dto.refreshToken);
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Omit<AuthResponse, 'refreshToken'>> {
+    const token = req.cookies?.refreshToken;
+    if (!token) {
+      throw new UnauthorizedException();
+    }
+
+    const authData = await this.authService.refresh(token);
+
+    this.setRefreshCookie(res, authData.refreshToken);
+
+    const { refreshToken, ...response } = authData;
+    return response;
+  }
+
+  private setRefreshCookie(res: Response, refreshToken: string): void {
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
   }
 
   @Post('password/forgot')
