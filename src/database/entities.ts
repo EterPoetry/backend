@@ -14,6 +14,7 @@ import { PostComplaint } from '../complaints/entities/post-complaint.entity';
 import { Follower } from '../followers/entities/follower.entity';
 import { Notification } from '../notifications/entities/notification.entity';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
+import { MailRequestCounter } from '../mail/entities/mail-request-counter.entity';
 
 export const ENTITIES = [
   User,
@@ -32,4 +33,5 @@ export const ENTITIES = [
   Follower,
   Notification,
   RefreshToken,
+  MailRequestCounter,
 ];

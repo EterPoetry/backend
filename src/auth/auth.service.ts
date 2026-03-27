@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -14,7 +16,7 @@ import { promisify } from 'util';
 import { IsNull, MoreThan, Repository } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
-import { MailjetService } from '../mail/mailjet.service';
+import { RateLimitedMailService } from '../mail/rate-limited-mail.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
@@ -23,7 +25,9 @@ const SCRYPT_KEYLEN = 64;
 const DEFAULT_ACCESS_TTL = '15m';
 const DEFAULT_REFRESH_TTL = '30d';
 const DEFAULT_PASSWORD_RESET_TTL = '1h';
+const DEFAULT_PASSWORD_RESET_REQUEST_COOLDOWN = '10m';
 const DEFAULT_EMAIL_VERIFICATION_TTL = '24h';
+const DEFAULT_EMAIL_VERIFICATION_REQUEST_COOLDOWN = '10m';
 
 export type SafeUser = Omit<
   User,
@@ -33,6 +37,7 @@ export type SafeUser = Omit<
   | 'refreshTokens'
   | 'resetPasswordTokenHash'
   | 'resetPasswordExpiresAt'
+  | 'passwordResetRequestedAt'
 >;
 
 export interface AuthResponse {
@@ -65,7 +70,7 @@ export class AuthService {
     private readonly refreshTokensRepository: Repository<RefreshToken>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    private readonly mailjetService: MailjetService,
+    private readonly mailService: RateLimitedMailService,
   ) {}
 
   getGoogleAuthUrl(): string {
@@ -98,6 +103,7 @@ export class AuthService {
       isEmailVerified: false,
       verificationCode: null,
       verificationCodeSentDate: null,
+      passwordResetRequestedAt: null,
     });
 
     const savedUser = await this.usersRepository.save(user);
@@ -156,7 +162,7 @@ export class AuthService {
     return this.issueAuthResponse(user);
   }
 
-  async requestPasswordReset(email: string): Promise<void> {
+  async requestPasswordReset(email: string, ipAddress: string | null): Promise<void> {
     const user = await this.usersRepository.findOne({
       where: { email },
     });
@@ -165,19 +171,30 @@ export class AuthService {
       return;
     }
 
-    const token = this.generatePasswordResetToken();
-    user.resetPasswordTokenHash = this.hashPasswordResetToken(token);
-    user.resetPasswordExpiresAt = this.getPasswordResetExpiryDate();
-    await this.usersRepository.save(user);
+    const now = Date.now();
+    const cooldownMs = this.getPasswordResetRequestCooldownMs();
 
-    const resetUrl = this.buildPasswordResetUrl(token);
-    await this.mailjetService.sendPasswordResetEmail(
-      { email: user.email, name: user.name },
-      resetUrl,
-    );
+    if (user.passwordResetRequestedAt) {
+      const elapsedMs = now - user.passwordResetRequestedAt.getTime();
+      if (elapsedMs < cooldownMs) {
+        return;
+      }
+    }
+
+    await this.mailService.sendPasswordResetEmail(ipAddress, async () => {
+      const token = this.generatePasswordResetToken();
+      user.resetPasswordTokenHash = this.hashPasswordResetToken(token);
+      user.resetPasswordExpiresAt = this.getPasswordResetExpiryDate();
+      user.passwordResetRequestedAt = new Date(now);
+      await this.usersRepository.save(user);
+
+      return {
+        recipient: { email: user.email, name: user.name },
+        resetUrl: this.buildPasswordResetUrl(token),
+      };
+    });
   }
-
-  async requestEmailVerification(userId: number): Promise<void> {
+  async requestEmailVerification(userId: number, ipAddress: string | null): Promise<void> {
     const user = await this.usersRepository.findOne({
       where: { userId },
     });
@@ -190,17 +207,57 @@ export class AuthService {
       throw new ConflictException('Email is already verified.');
     }
 
-    const code = this.generateEmailVerificationCode();
-    user.verificationCode = code;
-    user.verificationCodeSentDate = new Date();
-    await this.usersRepository.save(user);
+    if (user.verificationCodeSentDate) {
+      const cooldownMs = this.getEmailVerificationRequestCooldownMs();
+      const elapsedMs = Date.now() - user.verificationCodeSentDate.getTime();
 
-    const verificationUrl = this.buildEmailVerificationUrl(user.email, code);
-    await this.mailjetService.sendEmailVerificationEmail(
-      { email: user.email, name: user.name },
-      verificationUrl,
-    );
+      if (elapsedMs < cooldownMs) {
+        const waitMinutes = Math.ceil((cooldownMs - elapsedMs) / (60 * 1000));
+        throw new HttpException(
+          'Verification email was sent recently. Please wait ' +
+            waitMinutes +
+            ' minute' +
+            (waitMinutes === 1 ? '' : 's') +
+            ' before requesting another.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+
+    await this.mailService.sendEmailVerificationEmail(ipAddress, async () => {
+      const code = this.generateEmailVerificationCode();
+      user.verificationCode = code;
+      user.verificationCodeSentDate = new Date();
+      await this.usersRepository.save(user);
+
+      return {
+        recipient: { email: user.email, name: user.name },
+        verificationUrl: this.buildEmailVerificationUrl(user.email, code),
+      };
+    });
   }
+
+  async getEmailVerificationRequestStatus(
+    userId: number,
+  ): Promise<{ remainingMs: number | null }> {
+    const user = await this.usersRepository.findOne({
+      where: { userId },
+    });
+
+    if (!user || user.isEmailVerified || !user.verificationCodeSentDate) {
+      return { remainingMs: null };
+    }
+
+    const cooldownMs = this.getEmailVerificationRequestCooldownMs();
+    const elapsedMs = Date.now() - user.verificationCodeSentDate.getTime();
+
+    if (elapsedMs >= cooldownMs) {
+      return { remainingMs: null };
+    }
+
+    return { remainingMs: cooldownMs - elapsedMs };
+  }
+
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
     if (!token) {
@@ -229,6 +286,7 @@ export class AuthService {
     user.password = await this.hashPassword(newPassword);
     user.resetPasswordTokenHash = null;
     user.resetPasswordExpiresAt = null;
+    user.passwordResetRequestedAt = null;
     await this.usersRepository.save(user);
 
     await this.refreshTokensRepository.update(
@@ -517,6 +575,30 @@ export class AuthService {
     );
   }
 
+  private getPasswordResetRequestCooldownMs(): number {
+    const fallbackMs = this.parseDurationToMs(
+      DEFAULT_PASSWORD_RESET_REQUEST_COOLDOWN,
+      10 * 60 * 1000,
+    );
+    const cooldown = this.configService.get<string>(
+      'PASSWORD_RESET_REQUEST_COOLDOWN',
+      DEFAULT_PASSWORD_RESET_REQUEST_COOLDOWN,
+    );
+    return this.parseDurationToMs(cooldown, fallbackMs);
+  }
+
+  private getEmailVerificationRequestCooldownMs(): number {
+    const fallbackMs = this.parseDurationToMs(
+      DEFAULT_EMAIL_VERIFICATION_REQUEST_COOLDOWN,
+      10 * 60 * 1000,
+    );
+    const cooldown = this.configService.get<string>(
+      'EMAIL_VERIFICATION_REQUEST_COOLDOWN',
+      DEFAULT_EMAIL_VERIFICATION_REQUEST_COOLDOWN,
+    );
+    return this.parseDurationToMs(cooldown, fallbackMs);
+  }
+
   private safeCompare(a: string, b: string): boolean {
     const bufferA = Buffer.from(a);
     const bufferB = Buffer.from(b);
@@ -571,6 +653,7 @@ export class AuthService {
         isEmailVerified: payload.email_verified ?? false,
         verificationCode: null,
         verificationCodeSentDate: null,
+        passwordResetRequestedAt: null,
       });
 
       user = await this.usersRepository.save(user);
@@ -608,6 +691,7 @@ export class AuthService {
       verificationCode,
       verificationCodeSentDate,
       refreshTokens,
+      passwordResetRequestedAt,
       ...safeUser
     } = user;
     return safeUser;
