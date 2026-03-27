@@ -39,6 +39,9 @@ export class User {
   @Column({ name: 'reset_password_expires_at', type: 'timestamptz', nullable: true })
   resetPasswordExpiresAt: Date | null;
 
+  @Column({ name: 'password_reset_requested_at', type: 'timestamptz', nullable: true })
+  passwordResetRequestedAt: Date | null;
+
   @Column({ name: 'photo', type: 'varchar', length: 500, nullable: true })
   photo: string | null;
 

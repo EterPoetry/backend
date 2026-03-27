@@ -21,7 +21,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
-interface RequestWithUser {
+interface RequestWithUser extends Request {
   user: { userId: number; email?: string };
 }
 
@@ -103,10 +103,19 @@ export class AuthController {
     });
   }
 
+  private getClientIp(req: Request): string | null {
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const forwardedIp = Array.isArray(forwardedFor)
+      ? forwardedFor[0]
+      : forwardedFor?.split(',')[0];
+    const clientIp = forwardedIp?.trim() || req.ip || req.socket.remoteAddress;
+    return clientIp ? clientIp.slice(0, 64) : null;
+  }
+
   @Post('password/forgot')
   @HttpCode(200)
-  async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<{ ok: true }> {
-    await this.authService.requestPasswordReset(dto.email);
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request): Promise<{ ok: true }> {
+    await this.authService.requestPasswordReset(dto.email, this.getClientIp(req));
     return { ok: true };
   }
 
@@ -122,8 +131,17 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   async requestEmailVerification(@Req() req: RequestWithUser): Promise<{ ok: true }> {
-    await this.authService.requestEmailVerification(req.user.userId);
+    await this.authService.requestEmailVerification(req.user.userId, this.getClientIp(req));
     return { ok: true };
+  }
+
+  @Get('email/verify/request')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async getEmailVerificationRequestStatus(
+    @Req() req: RequestWithUser,
+  ): Promise<{ remainingMs: number | null }> {
+    return this.authService.getEmailVerificationRequestStatus(req.user.userId);
   }
 
   @Post('email/verify')
