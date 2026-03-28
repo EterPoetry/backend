@@ -28,13 +28,13 @@ export class RateLimitedMailService {
 
   async sendEmailVerificationEmail(
     ipAddress: string | null,
-    payloadFactory: () => Promise<{ recipient: MailRecipient; verificationUrl: string }>,
+    payloadFactory: () => Promise<{ recipient: MailRecipient; verificationCode: string }>,
   ): Promise<void> {
     if (!(await this.mailRequestLimitService.registerAttemptAndCheckAllowed(ipAddress))) {
       return;
     }
 
-    const { recipient, verificationUrl } = await payloadFactory();
-    await this.mailjetService.sendEmailVerificationEmail(recipient, verificationUrl);
+    const { recipient, verificationCode } = await payloadFactory();
+    await this.mailjetService.sendEmailVerificationEmail(recipient, verificationCode);
   }
 }
