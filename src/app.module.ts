@@ -13,6 +13,7 @@ import { ComplaintsModule } from './complaints/complaints.module';
 import { FollowersModule } from './followers/followers.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuthModule } from './auth/auth.module';
+import { ProfileModule } from './profile/profile.module';
 import { ENTITIES } from './database/entities';
 
 @Module({
@@ -47,6 +48,7 @@ import { ENTITIES } from './database/entities';
     FollowersModule,
     NotificationsModule,
     AuthModule,
+    ProfileModule,
   ],
 })
 export class AppModule {}
