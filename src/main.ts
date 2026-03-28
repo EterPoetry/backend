@@ -1,6 +1,9 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
+import express from 'express';
+import { mkdirSync } from 'fs';
+import { join } from 'path';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
@@ -8,6 +11,9 @@ async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
 
   app.use(cookieParser());
+  const uploadsRoot = join(process.cwd(), 'uploads');
+  mkdirSync(uploadsRoot, { recursive: true });
+  app.use('/uploads', express.static(uploadsRoot));
 
   app.enableCors({
     origin: 'http://localhost:5173',
@@ -38,6 +44,7 @@ async function bootstrap(): Promise<void> {
       .addTag('Google Auth', 'Google OAuth flows for web and mobile clients')
       .addTag('Password Recovery', 'Password reset request and password reset completion')
       .addTag('Email Verification', 'Email verification code delivery and confirmation')
+      .addTag('Profile', 'Current user profile management and statistics')
       .addBearerAuth()
       .build();
 
