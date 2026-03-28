@@ -9,14 +9,24 @@ import { AppModule } from './app.module';
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
+  const trustProxy = (process.env.TRUST_PROXY ?? '').toLowerCase();
 
   app.use(cookieParser());
   const uploadsRoot = join(process.cwd(), 'uploads');
   mkdirSync(uploadsRoot, { recursive: true });
   app.use('/uploads', express.static(uploadsRoot));
 
+  if (trustProxy === '1' || trustProxy === 'true' || trustProxy === 'yes') {
+    app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  }
+
+  const corsOrigins = (process.env.CORS_ORIGIN ?? 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: 'http://localhost:5173',
+    origin: corsOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
     allowedHeaders: 'Content-Type, Accept, Authorization',

@@ -1,0 +1,50 @@
+services:
+  app:
+    image: ${APP_IMAGE:-eter-backend-app:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eter-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '${APP_PORT:-3000}:3000'
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - eter
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: eter-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - eter
+
+volumes:
+  postgres_data:
+  uploads_data:
+
+networks:
+  eter:
+    driver: bridge
