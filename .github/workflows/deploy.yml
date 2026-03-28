@@ -100,8 +100,12 @@ jobs:
             set -e
             cd "${{ secrets.DEPLOY_PATH }}"
             test -f .env || { echo ".env file is missing in $PWD"; exit 1; }
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
             export APP_IMAGE="$APP_IMAGE"
+            if [ -n "$GHCR_USERNAME" ] && [ -n "$GHCR_TOKEN" ]; then
+              echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+            else
+              echo "GHCR credentials are not set; trying anonymous pull."
+            fi
             docker compose -f docker-compose.prod.yml pull app
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker image prune -f
