@@ -10,11 +10,15 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
   const trustProxy = (process.env.TRUST_PROXY ?? '').toLowerCase();
+  const storageDriver = (process.env.FILE_STORAGE_DRIVER ?? 'local').toLowerCase();
 
   app.use(cookieParser());
-  const uploadsRoot = join(process.cwd(), 'uploads');
-  mkdirSync(uploadsRoot, { recursive: true });
-  app.use('/uploads', express.static(uploadsRoot));
+
+  if (storageDriver === 'local') {
+    const uploadsRoot = join(process.cwd(), 'uploads');
+    mkdirSync(uploadsRoot, { recursive: true });
+    app.use('/uploads', express.static(uploadsRoot));
+  }
 
   if (trustProxy === '1' || trustProxy === 'true' || trustProxy === 'yes') {
     app.getHttpAdapter().getInstance().set('trust proxy', 1);
