@@ -11,14 +11,15 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { type CookieOptions, Request, Response } from 'express';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthService, AuthResponse } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
+import { GoogleMobileLoginDto } from './dto/google-mobile-login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 interface RequestWithUser extends Request {
@@ -31,11 +32,13 @@ export class AuthController {
 
   @Get('google')
   @Redirect()
+  @ApiTags('Google Auth')
   googleAuth(): { url: string } {
     return { url: this.authService.getGoogleAuthUrl() };
   }
 
   @Get('google/callback')
+  @ApiTags('Google Auth')
   async googleCallback(
     @Query('code') code: string,
     @Res() res: Response,
@@ -51,7 +54,21 @@ export class AuthController {
     res.status(200).json(response);
   }
 
+  @Post('google/mobile')
+  @HttpCode(200)
+  @ApiTags('Google Auth')
+  async googleMobileLogin(
+    @Body() dto: GoogleMobileLoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Omit<AuthResponse, 'refreshToken'>> {
+    const authData = await this.authService.googleMobileLogin(dto.idToken);
+    this.setRefreshCookie(res, authData.refreshToken);
+    const { refreshToken, ...response } = authData;
+    return response;
+  }
+
   @Post('register')
+  @ApiTags('Authentication')
   async register(
     @Body() dto: RegisterDto,
     @Res({ passthrough: true }) res: Response,
@@ -64,6 +81,7 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(200)
+  @ApiTags('Authentication')
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
@@ -76,6 +94,7 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(200)
+  @ApiTags('Authentication')
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -93,14 +112,36 @@ export class AuthController {
     return response;
   }
 
+  @Post('logout')
+  @HttpCode(200)
+  @ApiTags('Authentication')
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ ok: true }> {
+    await this.authService.logout(req.cookies?.refreshToken);
+    this.clearRefreshCookie(res);
+    return { ok: true };
+  }
+
   private setRefreshCookie(res: Response, refreshToken: string): void {
     res.cookie('refreshToken', refreshToken, {
+      ...this.getRefreshCookieBaseOptions(),
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+  }
+
+  private clearRefreshCookie(res: Response): void {
+    res.clearCookie('refreshToken', this.getRefreshCookieBaseOptions());
+  }
+
+  private getRefreshCookieBaseOptions(): CookieOptions {
+    return {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       path: '/',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-    });
+    };
   }
 
   private getClientIp(req: Request): string | null {
@@ -114,6 +155,7 @@ export class AuthController {
 
   @Post('password/forgot')
   @HttpCode(200)
+  @ApiTags('Password Recovery')
   async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request): Promise<{ ok: true }> {
     await this.authService.requestPasswordReset(dto.email, this.getClientIp(req));
     return { ok: true };
@@ -121,6 +163,7 @@ export class AuthController {
 
   @Post('password/reset')
   @HttpCode(200)
+  @ApiTags('Password Recovery')
   async resetPassword(@Body() dto: ResetPasswordDto): Promise<{ ok: true }> {
     await this.authService.resetPassword(dto.token, dto.newPassword);
     return { ok: true };
@@ -129,6 +172,7 @@ export class AuthController {
   @Post('email/verify/request')
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
+  @ApiTags('Email Verification')
   @ApiBearerAuth()
   async requestEmailVerification(@Req() req: RequestWithUser): Promise<{ ok: true }> {
     await this.authService.requestEmailVerification(req.user.userId, this.getClientIp(req));
@@ -137,6 +181,7 @@ export class AuthController {
 
   @Get('email/verify/request')
   @UseGuards(JwtAuthGuard)
+  @ApiTags('Email Verification')
   @ApiBearerAuth()
   async getEmailVerificationRequestStatus(
     @Req() req: RequestWithUser,
@@ -146,6 +191,7 @@ export class AuthController {
 
   @Post('email/verify')
   @HttpCode(200)
+  @ApiTags('Email Verification')
   async verifyEmail(@Body() dto: VerifyEmailDto): Promise<{ ok: true }> {
     await this.authService.verifyEmail(dto.email, dto.code);
     return { ok: true };

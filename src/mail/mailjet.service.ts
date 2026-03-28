@@ -53,7 +53,7 @@ export class MailjetService {
 
   async sendEmailVerificationEmail(
     recipient: MailjetRecipient,
-    verificationUrl: string,
+    verificationCode: string,
   ): Promise<void> {
     const { apiKey, apiSecret, senderEmail, senderName } = this.getConfig();
     const auth = Buffer.from(`${apiKey}:${apiSecret}`).toString('base64');
@@ -72,8 +72,13 @@ export class MailjetService {
             },
           ],
           Subject: 'Verify your email',
-          TextPart: `Use this link to verify your email: ${verificationUrl}`,
-          HTMLPart: `<p>Use this link to verify your email:</p><p><a href="${verificationUrl}">${verificationUrl}</a></p>`,
+          TextPart:
+            `Your email verification code is: ${verificationCode}\n\n` +
+            'Enter this 6-digit code in the app to verify your email.',
+          HTMLPart:
+            `<p>Your email verification code is:</p>` +
+            `<p style="font-size: 24px; font-weight: 700; letter-spacing: 4px;">${verificationCode}</p>` +
+            '<p>Enter this 6-digit code in the app to verify your email.</p>',
         },
       ],
     };
