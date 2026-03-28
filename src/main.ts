@@ -34,6 +34,10 @@ async function bootstrap(): Promise<void> {
       .setTitle('Eter Poetry API')
       .setDescription('API documentation for Eter Poetry backend')
       .setVersion('1.0.0')
+      .addTag('Authentication', 'Registration, login, token refresh, and logout')
+      .addTag('Google Auth', 'Google OAuth flows for web and mobile clients')
+      .addTag('Password Recovery', 'Password reset request and password reset completion')
+      .addTag('Email Verification', 'Email verification code delivery and confirmation')
       .addBearerAuth()
       .build();
 

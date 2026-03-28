@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsString, Length, Matches, MaxLength } from 'class-validator';
 
 export class VerifyEmailDto {
   @ApiProperty({
@@ -11,10 +11,10 @@ export class VerifyEmailDto {
   email: string;
 
   @ApiProperty({
-    example: 'f11d9f6c246b4e9a7aa9b3c8d3020e9b',
+    example: '123456',
   })
   @IsString()
-  @MinLength(10)
-  @MaxLength(32)
+  @Length(6, 6)
+  @Matches(/^\d{6}$/)
   code: string;
 }

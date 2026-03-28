@@ -10,7 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { createHmac, randomBytes, scrypt as _scrypt, timingSafeEqual } from 'crypto';
+import { createHmac, randomBytes, randomInt, scrypt as _scrypt, timingSafeEqual } from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { promisify } from 'util';
 import { IsNull, MoreThan, Repository } from 'typeorm';
@@ -162,6 +162,28 @@ export class AuthService {
     return this.issueAuthResponse(user);
   }
 
+  async logout(refreshToken: string | undefined): Promise<void> {
+    if (!refreshToken) {
+      return;
+    }
+
+    try {
+      const payload = await this.verifyRefreshToken(refreshToken);
+      const tokenHash = this.hashRefreshToken(refreshToken);
+
+      await this.refreshTokensRepository.update(
+        {
+          userId: payload.sub,
+          tokenHash,
+          revokedAt: IsNull(),
+        },
+        { revokedAt: new Date() },
+      );
+    } catch {
+      return;
+    }
+  }
+
   async requestPasswordReset(email: string, ipAddress: string | null): Promise<void> {
     const user = await this.usersRepository.findOne({
       where: { email },
@@ -232,7 +254,7 @@ export class AuthService {
 
       return {
         recipient: { email: user.email, name: user.name },
-        verificationUrl: this.buildEmailVerificationUrl(user.email, code),
+        verificationCode: code,
       };
     });
   }
@@ -339,6 +361,14 @@ export class AuthService {
     }
 
     return this.googleLoginWithIdToken(tokens.id_token);
+  }
+
+  async googleMobileLogin(idToken: string): Promise<AuthResponse> {
+    if (!idToken) {
+      throw new BadRequestException('Missing Google ID token.');
+    }
+
+    return this.googleLoginWithIdToken(idToken);
   }
 
   getGoogleFrontendRedirectUrl(authResponse: AuthResponse): string | null {
@@ -535,27 +565,22 @@ export class AuthService {
   }
 
   private buildPasswordResetUrl(token: string): string {
-    const directUrl = this.configService.get<string>('PASSWORD_RESET_URL');
-    const baseUrl = directUrl ?? this.configService.get<string>('APP_BASE_URL', '');
-    const normalizedBase = baseUrl ? baseUrl.replace(/\/$/, '') : '';
-    const resetBase = directUrl ? directUrl : `${normalizedBase}/reset-password`;
-    const separator = resetBase.includes('?') ? '&' : '?';
-    return `${resetBase}${separator}token=${encodeURIComponent(token)}`;
+    const directUrl = this.configService.get<string>('PASSWORD_RESET_URL')?.trim();
+    if (!directUrl) {
+      throw new ServiceUnavailableException('PASSWORD_RESET_URL is not configured.');
+    }
+
+    try {
+      const resetUrl = new URL(directUrl);
+      resetUrl.searchParams.set('token', token);
+      return resetUrl.toString();
+    } catch {
+      throw new ServiceUnavailableException('PASSWORD_RESET_URL is invalid.');
+    }
   }
 
   private generateEmailVerificationCode(): string {
-    return randomBytes(16).toString('hex');
-  }
-
-  private buildEmailVerificationUrl(email: string, code: string): string {
-    const directUrl = this.configService.get<string>('EMAIL_VERIFICATION_URL');
-    const baseUrl = directUrl ?? this.configService.get<string>('APP_BASE_URL', '');
-    const normalizedBase = baseUrl ? baseUrl.replace(/\/$/, '') : '';
-    const verifyBase = directUrl ? directUrl : `${normalizedBase}/verify-email`;
-    const separator = verifyBase.includes('?') ? '&' : '?';
-    return `${verifyBase}${separator}email=${encodeURIComponent(
-      email,
-    )}&code=${encodeURIComponent(code)}`;
+    return `${randomInt(0, 1000000)}`.padStart(6, '0');
   }
 
   private isEmailVerificationCodeValid(sentAt: Date): boolean {
@@ -619,16 +644,33 @@ export class AuthService {
     return new OAuth2Client(clientId, clientSecret, redirectUri);
   }
 
-  private async googleLoginWithIdToken(idToken: string): Promise<AuthResponse> {
+  private getGoogleTokenVerifierClient(): OAuth2Client {
     const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
     if (!clientId) {
       throw new ServiceUnavailableException('Google auth is not configured.');
     }
 
-    const client = this.getGoogleClient();
+    return new OAuth2Client(clientId);
+  }
+
+  private getGoogleAudiences(): string[] {
+    const audiences = [
+      this.configService.get<string>('GOOGLE_CLIENT_ID')?.trim(),
+      this.configService.get<string>('GOOGLE_ANDROID_CLIENT_ID')?.trim(),
+    ].filter((value): value is string => Boolean(value));
+
+    if (audiences.length === 0) {
+      throw new ServiceUnavailableException('Google auth is not configured.');
+    }
+
+    return [...new Set(audiences)];
+  }
+
+  private async googleLoginWithIdToken(idToken: string): Promise<AuthResponse> {
+    const client = this.getGoogleTokenVerifierClient();
     const ticket = await client.verifyIdToken({
       idToken,
-      audience: clientId,
+      audience: this.getGoogleAudiences(),
     });
     const payload = ticket.getPayload() as GoogleProfile | undefined;
 
