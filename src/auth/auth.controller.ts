@@ -136,12 +136,56 @@ export class AuthController {
   }
 
   private getRefreshCookieBaseOptions(): CookieOptions {
+    const secure =
+      this.getBooleanEnv('REFRESH_COOKIE_SECURE') ?? process.env.NODE_ENV === 'production';
+    const sameSite = this.getRefreshCookieSameSite(secure);
+    const domain = process.env.REFRESH_COOKIE_DOMAIN?.trim();
+
     return {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure,
+      sameSite,
+      ...(domain ? { domain } : {}),
       path: '/',
     };
+  }
+
+  private getRefreshCookieSameSite(secure: boolean): CookieOptions['sameSite'] {
+    const configuredValue = process.env.REFRESH_COOKIE_SAME_SITE?.trim().toLowerCase();
+
+    if (!configuredValue) {
+      return secure ? 'none' : 'lax';
+    }
+
+    if (
+      configuredValue === 'lax' ||
+      configuredValue === 'strict' ||
+      configuredValue === 'none'
+    ) {
+      return configuredValue;
+    }
+
+    throw new UnauthorizedException(
+      'REFRESH_COOKIE_SAME_SITE must be one of: lax, strict, none.',
+    );
+  }
+
+  private getBooleanEnv(name: string): boolean | null {
+    const value = process.env[name]?.trim().toLowerCase();
+
+    if (!value) {
+      return null;
+    }
+
+    if (value === 'true' || value === '1' || value === 'yes') {
+      return true;
+    }
+
+    if (value === 'false' || value === '0' || value === 'no') {
+      return false;
+    }
+
+    throw new UnauthorizedException(`${name} must be a boolean value.`);
   }
 
   private getClientIp(req: Request): string | null {
