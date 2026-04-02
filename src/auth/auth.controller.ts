@@ -234,8 +234,10 @@ export class AuthController {
   }
 
   @Post('email/verify')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(200)
   @ApiTags('Email Verification')
+  @ApiBearerAuth()
   async verifyEmail(@Body() dto: VerifyEmailDto): Promise<{ ok: true }> {
     await this.authService.verifyEmail(dto.email, dto.code);
     return { ok: true };
