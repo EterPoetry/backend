@@ -1,6 +1,7 @@
 import { User } from '../users/entities/user.entity';
 import { Post } from '../posts/entities/post.entity';
 import { PostTextPart } from '../posts/entities/post-text-part.entity';
+import { PostAudioProcessingJob } from '../posts/entities/post-audio-processing-job.entity';
 import { Category } from '../categories/entities/category.entity';
 import { PostCategory } from '../categories/entities/post-category.entity';
 import { PostReaction } from '../reactions/entities/post-reaction.entity';
@@ -20,6 +21,7 @@ export const ENTITIES = [
   User,
   Post,
   PostTextPart,
+  PostAudioProcessingJob,
   Category,
   PostCategory,
   PostReaction,
