@@ -1,8 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
-import { mkdir, unlink, writeFile } from 'fs/promises';
+import { readFile, mkdir, unlink, writeFile } from 'fs/promises';
 import { extname, join, posix } from 'path';
 
 export interface StoredFile {
@@ -91,6 +91,38 @@ export class FileStorageService {
     }
   }
 
+  async readFile(fileKey: string): Promise<StoredFile> {
+    if (!fileKey || this.isRemoteUrl(fileKey)) {
+      throw new BadRequestException('Only internal stored files can be read.');
+    }
+
+    const normalizedFileKey = this.normalizeRelativePath(fileKey);
+    const storageDriver = this.getStorageDriver();
+
+    if (storageDriver === 's3') {
+      const response = await this.createS3Client().send(
+        new GetObjectCommand({
+          Bucket: this.getRequiredConfig('S3_BUCKET'),
+          Key: normalizedFileKey,
+        }),
+      );
+
+      return {
+        buffer: await this.readS3Body(response.Body),
+        originalname: normalizedFileKey.split('/').pop(),
+      };
+    }
+
+    if (storageDriver === 'local') {
+      return {
+        buffer: await readFile(join(this.getUploadsRoot(), normalizedFileKey)),
+        originalname: normalizedFileKey.split('/').pop(),
+      };
+    }
+
+    return this.assertUnreachable(storageDriver);
+  }
+
   getFileUrl(fileKey: string | null | undefined): string | null {
     if (!fileKey) {
       return null;
@@ -168,6 +200,19 @@ export class FileStorageService {
 
   private normalizeRelativePath(value: string): string {
     return value.replace(/^\/+/, '').replace(/\\/g, '/');
+  }
+
+  private async readS3Body(body: unknown): Promise<Buffer> {
+    if (!body) {
+      return Buffer.alloc(0);
+    }
+
+    if (typeof body === 'object' && 'transformToByteArray' in body) {
+      const bytes = await (body as { transformToByteArray(): Promise<Uint8Array> }).transformToByteArray();
+      return Buffer.from(bytes);
+    }
+
+    throw new BadRequestException('Unsupported S3 body response.');
   }
 
   private assertUnreachable(value: never): never {

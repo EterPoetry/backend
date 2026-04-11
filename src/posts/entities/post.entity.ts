@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
@@ -14,23 +15,27 @@ import { PostReaction } from '../../reactions/entities/post-reaction.entity';
 import { PostComment } from '../../comments/entities/post-comment.entity';
 import { PostComplaint } from '../../complaints/entities/post-complaint.entity';
 import { Notification } from '../../notifications/entities/notification.entity';
+import { PostStatus } from '../../common/enums/post-status.enum';
 
 @Entity({ name: 'posts' })
 export class Post {
   @PrimaryGeneratedColumn({ name: 'post_id' })
   postId: number;
 
-  @Column({ name: 'title', type: 'varchar', length: 200 })
-  title: string;
+  @Column({ name: 'title', type: 'varchar', length: 200, nullable: true })
+  title: string | null;
 
   @Column({ name: 'description', type: 'text', nullable: true })
   description: string | null;
 
-  @Column({ name: 'text', type: 'text' })
-  text: string;
+  @Column({ name: 'text', type: 'text', nullable: true })
+  text: string | null;
 
-  @Column({ name: 'audio_file_name', type: 'varchar', length: 300 })
-  audioFileName: string;
+  @Column({ name: 'audio_file_name', type: 'varchar', length: 300, nullable: true })
+  audioFileName: string | null;
+
+  @Column({ name: 'source_audio_file_name', type: 'varchar', length: 300, nullable: true })
+  sourceAudioFileName: string | null;
 
   @Column({ name: 'listens', type: 'integer', default: 0 })
   listens: number;
@@ -38,7 +43,16 @@ export class Post {
   @Column({ name: 'origin_author_name', type: 'varchar', length: 200, nullable: true })
   originAuthorName: string | null;
 
+  @Column({
+    name: 'status',
+    type: 'enum',
+    enum: PostStatus,
+    default: PostStatus.DRAFT,
+  })
+  status: PostStatus;
+
   @ManyToOne(() => User, (user) => user.posts, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'author_id' })
   author: User;
 
   @Column({ name: 'author_id', type: 'integer' })
