@@ -131,7 +131,7 @@ export class PostsService {
     const limit = query.limit;
     const offset = query.offset;
 
-    queryBuilder.orderBy(sortColumn, sortDirection).addOrderBy('post.post_id', 'DESC');
+    queryBuilder.orderBy(sortColumn, sortDirection).addOrderBy('post.postId', 'DESC');
     queryBuilder.skip(offset).take(limit);
 
     const [posts, total] = await queryBuilder.getManyAndCount();
@@ -332,14 +332,14 @@ export class PostsService {
   private mapSortByToColumn(sortBy: MyPostsSortBy): string {
     switch (sortBy) {
       case MyPostsSortBy.UPDATED_AT:
-        return 'post.updated_at';
+        return 'post.updatedAt';
       case MyPostsSortBy.TITLE:
         return 'post.title';
       case MyPostsSortBy.LISTENS:
         return 'post.listens';
       case MyPostsSortBy.CREATED_AT:
       default:
-        return 'post.created_at';
+        return 'post.createdAt';
     }
   }
 

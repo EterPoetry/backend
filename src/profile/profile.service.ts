@@ -89,26 +89,6 @@ export class ProfileService {
     return this.buildProfileResponse(user);
   }
 
-  async deleteMyAvatar(userId: number): Promise<ProfileResponse> {
-    const user = await this.usersRepository.findOne({ where: { userId } });
-
-    if (!user) {
-      throw new NotFoundException('User not found.');
-    }
-
-    const previousAvatarPath = user.photo;
-    if (!previousAvatarPath) {
-      throw new NotFoundException('Avatar not found.');
-    }
-
-    user.photo = null;
-    await this.usersRepository.save(user);
-
-    await this.avatarStorageService.deleteAvatar(previousAvatarPath);
-
-    return this.buildProfileResponse(user);
-  }
-
   private async buildProfileResponse(user: User): Promise<ProfileResponse> {
     const [followersCount, followingCount, postsCount] = await Promise.all([
       this.followersRepository.countBy({ targetUserId: user.userId }),
