@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Body,
   Controller,
-  Delete,
   Get,
   Patch,
   Req,
@@ -111,10 +110,5 @@ export class ProfileController {
     }
 
     return this.profileService.updateMyAvatar(req.user.userId, avatar);
-  }
-
-  @Delete('me/avatar')
-  async deleteMyAvatar(@Req() req: RequestWithUser): Promise<ProfileResponseDto> {
-    return this.profileService.deleteMyAvatar(req.user.userId);
   }
 }
