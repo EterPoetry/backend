@@ -24,6 +24,9 @@ export class User {
   @Column({ name: 'name', type: 'varchar', length: 120 })
   name: string;
 
+  @Column({ name: 'username', type: 'varchar', length: 30, unique: true })
+  username: string;
+
   @Column({ name: 'email', type: 'varchar', length: 320, unique: true })
   email: string;
 

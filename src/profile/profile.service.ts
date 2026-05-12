@@ -3,13 +3,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Follower } from '../followers/entities/follower.entity';
 import { Post } from '../posts/entities/post.entity';
+import { rethrowUserUniqueConstraint } from '../users/user-conflict.util';
 import { User } from '../users/entities/user.entity';
+import { UsernameService } from '../users/username.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AvatarStorageService, UploadedAvatar } from './avatar-storage.service';
 
 export interface ProfileResponse {
   userId: number;
   name: string;
+  username: string;
   email: string;
   photo: string | null;
   isEmailVerified: boolean;
@@ -29,6 +32,7 @@ export class ProfileService {
     @InjectRepository(Post)
     private readonly postsRepository: Repository<Post>,
     private readonly avatarStorageService: AvatarStorageService,
+    private readonly usernameService: UsernameService,
   ) {}
 
   async getMyProfile(userId: number): Promise<ProfileResponse> {
@@ -55,7 +59,18 @@ export class ProfileService {
       user.name = dto.name;
     }
 
-    await this.usersRepository.save(user);
+    if (dto.username !== undefined) {
+      user.username = await this.usernameService.validateAndReserveUsername(
+        dto.username,
+        user.userId,
+      );
+    }
+
+    try {
+      await this.usersRepository.save(user);
+    } catch (error) {
+      rethrowUserUniqueConstraint(error);
+    }
 
     return this.buildProfileResponse(user);
   }
@@ -99,6 +114,7 @@ export class ProfileService {
     return {
       userId: user.userId,
       name: user.name,
+      username: user.username,
       email: user.email,
       photo: this.avatarStorageService.getAvatarUrl(user.photo),
       isEmailVerified: user.isEmailVerified,
