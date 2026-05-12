@@ -15,6 +15,13 @@ import { OAuth2Client } from 'google-auth-library';
 import { promisify } from 'util';
 import { IsNull, MoreThan, Repository } from 'typeorm';
 import { User } from '../users/entities/user.entity';
+import {
+  createUserConflictsException,
+  type UserConflictError,
+  getUserConflictError,
+  rethrowUserUniqueConstraint,
+} from '../users/user-conflict.util';
+import { UsernameService } from '../users/username.service';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RateLimitedMailService } from '../mail/rate-limited-mail.service';
 import { LoginDto } from './dto/login.dto';
@@ -71,6 +78,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: RateLimitedMailService,
+    private readonly usernameService: UsernameService,
   ) {}
 
   getGoogleAuthUrl(): string {
@@ -85,18 +93,21 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto): Promise<AuthResponse> {
-    const existingUser = await this.usersRepository.findOne({
-      where: { email: dto.email },
-    });
-
-    if (existingUser) {
-      throw new ConflictException('Email is already registered.');
+    const conflicts = await this.collectRegistrationConflicts(dto);
+    if (conflicts.length > 0) {
+      throw createUserConflictsException(conflicts);
     }
 
     const passwordHash = await this.hashPassword(dto.password);
+    const username = await this.usernameService.resolveUsername(dto.username, [
+      dto.username,
+      dto.name,
+      dto.email,
+    ]);
 
     const user = this.usersRepository.create({
       name: dto.name,
+      username,
       email: dto.email,
       password: passwordHash,
       photo: null,
@@ -106,8 +117,46 @@ export class AuthService {
       passwordResetRequestedAt: null,
     });
 
-    const savedUser = await this.usersRepository.save(user);
+    let savedUser: User;
+    try {
+      savedUser = await this.usersRepository.save(user);
+    } catch (error) {
+      rethrowUserUniqueConstraint(error);
+    }
+
     return this.issueAuthResponse(savedUser);
+  }
+
+  private async collectRegistrationConflicts(dto: RegisterDto): Promise<UserConflictError[]> {
+    const conflicts: UserConflictError[] = [];
+    const existingUser = await this.usersRepository.findOne({
+      where: { email: dto.email },
+    });
+
+    if (existingUser) {
+      const emailConflict = getUserConflictError('email');
+      if (emailConflict) {
+        conflicts.push(emailConflict);
+      }
+    }
+
+    if (dto.username !== undefined) {
+      const normalizedUsername = this.usernameService.normalizeUsername(dto.username);
+      if (normalizedUsername.length >= 3) {
+        const existingUsernameUser = await this.usersRepository.findOne({
+          where: { username: normalizedUsername },
+        });
+
+        if (existingUsernameUser) {
+          const usernameConflict = getUserConflictError('username');
+          if (usernameConflict) {
+            conflicts.push(usernameConflict);
+          }
+        }
+      }
+    }
+
+    return conflicts;
   }
 
   async login(dto: LoginDto): Promise<AuthResponse> {
@@ -685,9 +734,15 @@ export class AuthService {
 
     if (!user) {
       const fallbackName = payload.name || payload.email?.split('@')[0] || 'User';
+      const username = await this.usernameService.generateUniqueUsername([
+        payload.name,
+        payload.email,
+        payload.sub,
+      ]);
 
       user = this.usersRepository.create({
         name: fallbackName.slice(0, 120),
+        username,
         email: payload.email ?? `${payload.sub}@google.local`,
         password: null,
         googleId: payload.sub,
@@ -698,7 +753,11 @@ export class AuthService {
         passwordResetRequestedAt: null,
       });
 
-      user = await this.usersRepository.save(user);
+      try {
+        user = await this.usersRepository.save(user);
+      } catch (error) {
+        rethrowUserUniqueConstraint(error);
+      }
       return this.issueAuthResponse(user);
     }
 
@@ -722,7 +781,19 @@ export class AuthService {
       user.name = payload.name;
     }
 
-    user = await this.usersRepository.save(user);
+    if (!user.username) {
+      user.username = await this.usernameService.generateUniqueUsername(
+        [payload.name, payload.email, user.name, user.email, payload.sub],
+        user.userId,
+      );
+    }
+
+    try {
+      user = await this.usersRepository.save(user);
+    } catch (error) {
+      rethrowUserUniqueConstraint(error);
+    }
+
     return this.issueAuthResponse(user);
   }
 

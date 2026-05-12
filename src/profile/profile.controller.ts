@@ -38,6 +38,9 @@ class ProfileResponseDto implements ProfileResponse {
   name: string;
 
   @ApiProperty()
+  username: string;
+
+  @ApiProperty()
   email: string;
 
   @ApiPropertyOptional({ nullable: true })
