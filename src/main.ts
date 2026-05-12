@@ -59,6 +59,7 @@ async function bootstrap(): Promise<void> {
       .addTag('Password Recovery', 'Password reset request and password reset completion')
       .addTag('Email Verification', 'Email verification code delivery and confirmation')
       .addTag('Profile', 'Current user profile management and statistics')
+      .addTag('Complaints', 'Complaint reasons and complaint submission helpers')
       .addBearerAuth()
       .build();
 

@@ -22,7 +22,13 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UploadedAvatar } from './avatar-storage.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { ProfileResponse, ProfileService } from './profile.service';
+import {
+  ActiveViolationResponse,
+  ActiveViolationTargetPostResponse,
+  ProfileResponse,
+  ProfileService,
+} from './profile.service';
+import { ComplaintStatus } from '../common/enums/complaint-status.enum';
 
 const { memoryStorage } = require('multer');
 
@@ -63,6 +69,52 @@ class ProfileResponseDto implements ProfileResponse {
 
   @ApiProperty()
   postsCount: number;
+
+  @ApiProperty()
+  currentViolationsCount: number;
+
+  @ApiProperty()
+  maxViolationsBeforeBlock: number;
+}
+
+class ActiveViolationTargetPostDto implements ActiveViolationTargetPostResponse {
+  @ApiProperty()
+  postId: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  title: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  description: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  text: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  audioFileName: string | null;
+
+  @ApiProperty()
+  createdAt: Date;
+}
+
+class ActiveViolationResponseDto implements ActiveViolationResponse {
+  @ApiProperty()
+  complaintId: number;
+
+  @ApiProperty()
+  complaintReason: string;
+
+  @ApiProperty({ enum: ComplaintStatus, enumName: 'ComplaintStatus' })
+  status: ComplaintStatus;
+
+  @ApiProperty()
+  createdAt: Date;
+
+  @ApiPropertyOptional({ nullable: true })
+  expiresAt: Date | null;
+
+  @ApiProperty({ type: ActiveViolationTargetPostDto })
+  targetPost: ActiveViolationTargetPostDto;
 }
 
 @Controller('profile')
@@ -75,6 +127,11 @@ export class ProfileController {
   @Get('me')
   async getMyProfile(@Req() req: RequestWithUser): Promise<ProfileResponseDto> {
     return this.profileService.getMyProfile(req.user.userId);
+  }
+
+  @Get('me/violations')
+  async getMyActiveViolations(@Req() req: RequestWithUser): Promise<ActiveViolationResponseDto[]> {
+    return this.profileService.getMyActiveViolations(req.user.userId);
   }
 
   @Patch('me')
