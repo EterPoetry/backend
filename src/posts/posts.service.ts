@@ -12,6 +12,9 @@ import { UpdatePostDto } from './dto/update-post.dto';
 import { Category } from '../categories/entities/category.entity';
 import { PostCategory } from '../categories/entities/post-category.entity';
 import { GetCategoriesQueryDto } from './dto/get-categories-query.dto';
+import { User } from '../users/entities/user.entity';
+import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
+import { PublicConfigService } from '../public-config/public-config.service';
 
 export interface CategoryResponse {
   categoryId: number;
@@ -47,16 +50,22 @@ export class PostsService {
     private readonly dataSource: DataSource,
     @InjectRepository(Post)
     private readonly postsRepository: Repository<Post>,
+    @InjectRepository(User)
+    private readonly usersRepository: Repository<User>,
     @InjectRepository(Category)
     private readonly categoriesRepository: Repository<Category>,
     @InjectRepository(PostCategory)
     private readonly postCategoriesRepository: Repository<PostCategory>,
     private readonly postAudioStorageService: PostAudioStorageService,
     private readonly postAudioTranscodingService: PostAudioTranscodingService,
+    private readonly publicConfigService: PublicConfigService,
   ) {}
 
   async createEmptyPost(authorId: number, audio: UploadedPostAudio): Promise<PostResponse> {
-    await this.postAudioTranscodingService.ensureDurationWithinLimit(audio);
+    await this.postAudioTranscodingService.ensureDurationWithinLimit(
+      audio,
+      await this.getRecordingDurationLimitMinutes(authorId),
+    );
 
     const sourceAudioFileName = await this.postAudioStorageService.saveSourceAudio(authorId, audio);
     try {
@@ -240,7 +249,10 @@ export class PostsService {
       throw new ForbiddenException('Audio can only be replaced for draft posts.');
     }
 
-    await this.postAudioTranscodingService.ensureDurationWithinLimit(audio);
+    await this.postAudioTranscodingService.ensureDurationWithinLimit(
+      audio,
+      await this.getRecordingDurationLimitMinutes(requesterUserId),
+    );
     const sourceAudioFileName = await this.postAudioStorageService.saveSourceAudio(
       requesterUserId,
       audio,
@@ -418,5 +430,15 @@ export class PostsService {
 
   private hasNonEmptyValue(value: string | null | undefined): boolean {
     return typeof value === 'string' && value.trim().length > 0;
+  }
+
+  private async getRecordingDurationLimitMinutes(userId: number): Promise<number> {
+    const user = await this.usersRepository.findOne({
+      where: { userId },
+      relations: { subscription: true },
+    });
+
+    const isPremium = user?.subscription?.status === SubscriptionStatus.ACTIVE;
+    return this.publicConfigService.getRecordingDurationLimitMinutes(isPremium);
   }
 }

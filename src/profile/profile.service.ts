@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Follower } from '../followers/entities/follower.entity';
 import { Post } from '../posts/entities/post.entity';
+import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { rethrowUserUniqueConstraint } from '../users/user-conflict.util';
 import { User } from '../users/entities/user.entity';
 import { UsernameService } from '../users/username.service';
@@ -16,6 +17,7 @@ export interface ProfileResponse {
   email: string;
   photo: string | null;
   isEmailVerified: boolean;
+  isPremium: boolean;
   createdAt: Date;
   followersCount: number;
   followingCount: number;
@@ -36,7 +38,10 @@ export class ProfileService {
   ) {}
 
   async getMyProfile(userId: number): Promise<ProfileResponse> {
-    const user = await this.usersRepository.findOne({ where: { userId } });
+    const user = await this.usersRepository.findOne({
+      where: { userId },
+      relations: { subscription: true },
+    });
 
     if (!user) {
       throw new NotFoundException('User not found.');
@@ -49,7 +54,10 @@ export class ProfileService {
     userId: number,
     dto: UpdateProfileDto,
   ): Promise<ProfileResponse> {
-    const user = await this.usersRepository.findOne({ where: { userId } });
+    const user = await this.usersRepository.findOne({
+      where: { userId },
+      relations: { subscription: true },
+    });
 
     if (!user) {
       throw new NotFoundException('User not found.');
@@ -76,7 +84,10 @@ export class ProfileService {
   }
 
   async updateMyAvatar(userId: number, avatar: UploadedAvatar): Promise<ProfileResponse> {
-    const user = await this.usersRepository.findOne({ where: { userId } });
+    const user = await this.usersRepository.findOne({
+      where: { userId },
+      relations: { subscription: true },
+    });
 
     if (!user) {
       throw new NotFoundException('User not found.');
@@ -118,6 +129,7 @@ export class ProfileService {
       email: user.email,
       photo: this.avatarStorageService.getAvatarUrl(user.photo),
       isEmailVerified: user.isEmailVerified,
+      isPremium: user.subscription?.status === SubscriptionStatus.ACTIVE,
       createdAt: user.createdAt,
       followersCount,
       followingCount,

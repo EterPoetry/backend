@@ -50,6 +50,9 @@ class ProfileResponseDto implements ProfileResponse {
   isEmailVerified: boolean;
 
   @ApiProperty()
+  isPremium: boolean;
+
+  @ApiProperty()
   createdAt: Date;
 
   @ApiProperty()

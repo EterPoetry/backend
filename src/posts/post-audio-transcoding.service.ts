@@ -8,19 +8,18 @@ import { promisify } from 'util';
 import { StoredFile } from '../storage/file-storage.service';
 
 const execFileAsync = promisify(execFile);
-const MAX_AUDIO_DURATION_SECONDS = 7 * 60;
 
 @Injectable()
 export class PostAudioTranscodingService {
-  async ensureDurationWithinLimit(audio: StoredFile): Promise<void> {
+  async ensureDurationWithinLimit(audio: StoredFile, maxDurationMinutes: number): Promise<void> {
     const workingDirectory = await this.createWorkingDirectory();
     const inputPath = join(workingDirectory, `probe-${randomUUID()}`);
 
     try {
       await writeFile(inputPath, audio.buffer);
       const durationSeconds = await this.probeDurationSeconds(inputPath);
-      if (durationSeconds > MAX_AUDIO_DURATION_SECONDS) {
-        throw new BadRequestException('Audio duration exceeds 7 minutes.');
+      if (durationSeconds > maxDurationMinutes * 60) {
+        throw new BadRequestException(`Audio duration exceeds ${maxDurationMinutes} minutes.`);
       }
     } catch (error) {
       if (error instanceof BadRequestException || error instanceof InternalServerErrorException) {
