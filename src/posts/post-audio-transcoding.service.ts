@@ -11,7 +11,10 @@ const execFileAsync = promisify(execFile);
 
 @Injectable()
 export class PostAudioTranscodingService {
-  async ensureDurationWithinLimit(audio: StoredFile, maxDurationMinutes: number): Promise<void> {
+  async ensureDurationWithinLimit(
+    audio: StoredFile,
+    maxDurationMinutes: number,
+  ): Promise<number> {
     const workingDirectory = await this.createWorkingDirectory();
     const inputPath = join(workingDirectory, `probe-${randomUUID()}`);
 
@@ -21,6 +24,8 @@ export class PostAudioTranscodingService {
       if (durationSeconds > maxDurationMinutes * 60) {
         throw new BadRequestException(`Audio duration exceeds ${maxDurationMinutes} minutes.`);
       }
+
+      return Math.ceil(durationSeconds);
     } catch (error) {
       if (error instanceof BadRequestException || error instanceof InternalServerErrorException) {
         throw error;

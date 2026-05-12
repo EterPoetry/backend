@@ -5,7 +5,7 @@ export class InitSchema1741377600000 implements MigrationInterface {
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
-      `CREATE TYPE "public"."post_reactions_reaction_type_enum" AS ENUM('touched', 'strong', 'quiet')`,
+      `CREATE TYPE "public"."post_reactions_reaction_type_enum" AS ENUM('like')`,
     );
     await queryRunner.query(
       `CREATE TYPE "public"."post_complaints_status_enum" AS ENUM('pending', 'resolved', 'dismissed')`,

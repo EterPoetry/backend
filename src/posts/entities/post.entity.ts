@@ -37,6 +37,9 @@ export class Post {
   @Column({ name: 'source_audio_file_name', type: 'varchar', length: 300, nullable: true })
   sourceAudioFileName: string | null;
 
+  @Column({ name: 'audio_duration_seconds', type: 'integer', nullable: true })
+  audioDurationSeconds: number | null;
+
   @Column({ name: 'listens', type: 'integer', default: 0 })
   listens: number;
 
@@ -81,4 +84,8 @@ export class Post {
 
   @OneToMany(() => Notification, (notification) => notification.post)
   notifications: Notification[];
+
+  likesCount?: number;
+
+  commentsCount?: number;
 }

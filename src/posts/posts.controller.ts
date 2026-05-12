@@ -34,6 +34,7 @@ import {
   PostsService,
   PostResponse,
   PaginatedPostsResponse,
+  PostAuthorProfileResponse,
 } from './posts.service';
 import { PostAudioProcessingQueueService } from './post-audio-processing-queue.service';
 import { UploadedPostAudio } from './post-audio-storage.service';
@@ -55,7 +56,29 @@ class CategoryResponseDto implements CategoryResponse {
   categoryDescription: string | null;
 }
 
+class PostAuthorProfileResponseDto implements PostAuthorProfileResponse {
+  @ApiProperty()
+  userId: number;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty()
+  username: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  photo: string | null;
+
+  @ApiProperty()
+  isPremium: boolean;
+}
+
 class PostResponseDto implements PostResponse {
+  @ApiProperty({
+    type: () => PostAuthorProfileResponseDto,
+  })
+  author: PostAuthorProfileResponseDto;
+
   @ApiProperty()
   postId: number;
 
@@ -74,8 +97,17 @@ class PostResponseDto implements PostResponse {
   @ApiPropertyOptional({ nullable: true })
   audioFileUrl: string | null;
 
+  @ApiPropertyOptional({ nullable: true })
+  audioDurationSeconds: number | null;
+
   @ApiProperty()
   listens: number;
+
+  @ApiProperty()
+  likesCount: number;
+
+  @ApiProperty()
+  commentsCount: number;
 
   @ApiPropertyOptional({ nullable: true })
   originAuthorName: string | null;

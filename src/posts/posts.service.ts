@@ -15,6 +15,16 @@ import { GetCategoriesQueryDto } from './dto/get-categories-query.dto';
 import { User } from '../users/entities/user.entity';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { PublicConfigService } from '../public-config/public-config.service';
+import { FileStorageService } from '../storage/file-storage.service';
+import { ReactionType } from '../common/enums/reaction-type.enum';
+
+export interface PostAuthorProfileResponse {
+  userId: number;
+  name: string;
+  username: string;
+  photo: string | null;
+  isPremium: boolean;
+}
 
 export interface CategoryResponse {
   categoryId: number;
@@ -29,11 +39,15 @@ export interface PostResponse {
   text: string | null;
   audioFileName: string | null;
   audioFileUrl: string | null;
+  audioDurationSeconds: number | null;
   status: PostStatus;
   listens: number;
+  likesCount: number;
+  commentsCount: number;
   originAuthorName: string | null;
   categories: CategoryResponse[];
   authorId: number;
+  author: PostAuthorProfileResponse;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -59,10 +73,11 @@ export class PostsService {
     private readonly postAudioStorageService: PostAudioStorageService,
     private readonly postAudioTranscodingService: PostAudioTranscodingService,
     private readonly publicConfigService: PublicConfigService,
+    private readonly fileStorageService: FileStorageService,
   ) {}
 
   async createEmptyPost(authorId: number, audio: UploadedPostAudio): Promise<PostResponse> {
-    await this.postAudioTranscodingService.ensureDurationWithinLimit(
+    const audioDurationSeconds = await this.postAudioTranscodingService.ensureDurationWithinLimit(
       audio,
       await this.getRecordingDurationLimitMinutes(authorId),
     );
@@ -77,6 +92,7 @@ export class PostsService {
             text: null,
             audioFileName: null,
             sourceAudioFileName,
+            audioDurationSeconds,
             listens: 0,
             originAuthorName: null,
             status: PostStatus.PROCESSING,
@@ -95,7 +111,12 @@ export class PostsService {
         return savedPostEntity;
       });
 
-      return this.buildPostResponse(savedPost);
+      const post = await this.getPostById(savedPost.postId);
+      if (!post) {
+        throw new NotFoundException('Post not found.');
+      }
+
+      return this.buildPostResponse(post);
     } catch (error) {
       await this.postAudioStorageService.deleteAudio(sourceAudioFileName);
       throw error;
@@ -103,14 +124,9 @@ export class PostsService {
   }
 
   async getPostById(postId: number): Promise<Post | null> {
-    return this.postsRepository.findOne({
-      where: { postId },
-      relations: {
-        postCategories: {
-          category: true,
-        },
-      },
-    });
+    return this.createPostDetailsQueryBuilder()
+      .where('post.post_id = :postId', { postId })
+      .getOne();
   }
 
   async getPostDetails(postId: number, requesterUserId: number): Promise<PostResponse> {
@@ -124,8 +140,16 @@ export class PostsService {
   ): Promise<PaginatedPostsResponse> {
     const queryBuilder = this.postsRepository
       .createQueryBuilder('post')
+      .leftJoinAndSelect('post.author', 'author')
+      .leftJoinAndSelect('author.subscription', 'authorSubscription')
       .leftJoinAndSelect('post.postCategories', 'postCategory')
       .leftJoinAndSelect('postCategory.category', 'category')
+      .loadRelationCountAndMap('post.likesCount', 'post.postReactions', 'postReaction', (queryBuilder) =>
+        queryBuilder.where('postReaction.reactionType = :reactionType', {
+          reactionType: ReactionType.LIKE,
+        }),
+      )
+      .loadRelationCountAndMap('post.commentsCount', 'post.comments')
       .where('post.author_id = :authorId', { authorId });
 
     if (query.search?.trim()) {
@@ -141,6 +165,7 @@ export class PostsService {
     const offset = query.offset;
 
     queryBuilder.orderBy(sortColumn, sortDirection).addOrderBy('post.postId', 'DESC');
+    queryBuilder.distinct(true);
     queryBuilder.skip(offset).take(limit);
 
     const [posts, total] = await queryBuilder.getManyAndCount();
@@ -249,7 +274,7 @@ export class PostsService {
       throw new ForbiddenException('Audio can only be replaced for draft posts.');
     }
 
-    await this.postAudioTranscodingService.ensureDurationWithinLimit(
+    const audioDurationSeconds = await this.postAudioTranscodingService.ensureDurationWithinLimit(
       audio,
       await this.getRecordingDurationLimitMinutes(requesterUserId),
     );
@@ -266,6 +291,7 @@ export class PostsService {
         await manager.getRepository(Post).update(post.postId, {
           audioFileName: null,
           sourceAudioFileName,
+          audioDurationSeconds,
           status: PostStatus.PROCESSING,
         });
 
@@ -328,14 +354,18 @@ export class PostsService {
       text: post.text,
       audioFileName: post.audioFileName,
       audioFileUrl: this.postAudioStorageService.getAudioUrl(post.audioFileName),
+      audioDurationSeconds: post.audioDurationSeconds,
       status: post.status,
       listens: post.listens,
+      likesCount: post.likesCount ?? 0,
+      commentsCount: post.commentsCount ?? 0,
       originAuthorName: post.originAuthorName,
       categories: (post.postCategories ?? [])
         .map((postCategory) => postCategory.category)
         .filter((category): category is Category => Boolean(category))
         .map((category) => this.buildCategoryResponse(category)),
       authorId: post.authorId,
+      author: this.buildPostAuthorResponse(post.author),
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
     };
@@ -356,14 +386,7 @@ export class PostsService {
   }
 
   private async requireOwnedPost(postId: number, requesterUserId: number): Promise<Post> {
-    const post = await this.postsRepository.findOne({
-      where: { postId },
-      relations: {
-        postCategories: {
-          category: true,
-        },
-      },
-    });
+    const post = await this.getPostById(postId);
 
     if (!post) {
       throw new NotFoundException('Post not found.');
@@ -421,6 +444,16 @@ export class PostsService {
     };
   }
 
+  private buildPostAuthorResponse(author: User): PostAuthorProfileResponse {
+    return {
+      userId: author.userId,
+      name: author.name,
+      username: author.username,
+      photo: this.fileStorageService.getFileUrl(author.photo),
+      isPremium: author.subscription?.status === SubscriptionStatus.ACTIVE,
+    };
+  }
+
   private isPostReadyForPublishing(post: Post): boolean {
     return (
       this.hasNonEmptyValue(post.title) &&
@@ -440,5 +473,20 @@ export class PostsService {
 
     const isPremium = user?.subscription?.status === SubscriptionStatus.ACTIVE;
     return this.publicConfigService.getRecordingDurationLimitMinutes(isPremium);
+  }
+
+  private createPostDetailsQueryBuilder() {
+    return this.postsRepository
+      .createQueryBuilder('post')
+      .leftJoinAndSelect('post.author', 'author')
+      .leftJoinAndSelect('author.subscription', 'authorSubscription')
+      .leftJoinAndSelect('post.postCategories', 'postCategory')
+      .leftJoinAndSelect('postCategory.category', 'category')
+      .loadRelationCountAndMap('post.likesCount', 'post.postReactions', 'postReaction', (queryBuilder) =>
+        queryBuilder.where('postReaction.reactionType = :reactionType', {
+          reactionType: ReactionType.LIKE,
+        }),
+      )
+      .loadRelationCountAndMap('post.commentsCount', 'post.comments');
   }
 }
