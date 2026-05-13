@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Post } from './entities/post.entity';
 import { PostTextPart } from './entities/post-text-part.entity';
 import { PostAudioProcessingJob } from './entities/post-audio-processing-job.entity';
+import { PostListenSession } from './entities/post-listen-session.entity';
 import { StorageModule } from '../storage/storage.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { CommentsModule } from '../comments/comments.module';
@@ -16,7 +17,7 @@ import { PostAudioProcessingQueueService } from './post-audio-processing-queue.s
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Post, PostTextPart, PostAudioProcessingJob]),
+    TypeOrmModule.forFeature([Post, PostTextPart, PostAudioProcessingJob, PostListenSession]),
     StorageModule,
     CategoriesModule,
     CommentsModule,

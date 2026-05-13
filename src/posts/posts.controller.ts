@@ -35,16 +35,22 @@ import { CreateCommentDto } from '../comments/dto/create-comment.dto';
 import { GetPostCommentsQueryDto } from '../comments/dto/get-post-comments-query.dto';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { GetCategoriesQueryDto } from './dto/get-categories-query.dto';
+import { EndPostListenDto } from './dto/end-post-listen.dto';
 import { GetMyPostsQueryDto } from './dto/get-my-posts-query.dto';
+import { StartPostListenDto } from './dto/start-post-listen.dto';
+import { UpdatePostListenProgressDto } from './dto/update-post-listen-progress.dto';
 import { UpdatePostTextSynchronizationDto } from './dto/update-post-text-synchronization.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import {
   CategoryResponse,
+  EndPostListenResponse,
   PostsService,
   PostResponse,
   PaginatedPostsResponse,
   PostAuthorProfileResponse,
+  StartPostListenResponse,
   PostTextSynchronizationItemResponse,
+  UpdatePostListenProgressResponse,
 } from './posts.service';
 import { PostAudioProcessingQueueService } from './post-audio-processing-queue.service';
 import { UploadedPostAudio } from './post-audio-storage.service';
@@ -220,6 +226,45 @@ class PaginatedPostsResponseDto implements PaginatedPostsResponse {
   offset: number;
 }
 
+class StartPostListenResponseDto implements StartPostListenResponse {
+  @ApiProperty()
+  token: string;
+
+  @ApiProperty()
+  listenedMs: number;
+
+  @ApiProperty()
+  trackDurationMs: number;
+
+  @ApiProperty()
+  isSuspicious: boolean;
+}
+
+class UpdatePostListenProgressResponseDto implements UpdatePostListenProgressResponse {
+  @ApiProperty()
+  listenedMs: number;
+
+  @ApiProperty()
+  isSuspicious: boolean;
+
+  @ApiPropertyOptional({ nullable: true })
+  suspiciousReason: string | null;
+}
+
+class EndPostListenResponseDto
+  extends UpdatePostListenProgressResponseDto
+  implements EndPostListenResponse
+{
+  @ApiProperty()
+  counted: boolean;
+
+  @ApiPropertyOptional({ nullable: true })
+  countedAt: Date | null;
+
+  @ApiProperty()
+  thresholdReached: boolean;
+}
+
 @Controller('posts')
 @ApiTags('Posts')
 @UseGuards(JwtAuthGuard)
@@ -259,6 +304,44 @@ export class PostsController {
     @Query() query: GetPostCommentsQueryDto,
   ): Promise<PaginatedCommentsResponseDto> {
     return this.commentsService.getPostComments(postId, req.user.userId, query);
+  }
+
+  @HttpPost(':postId/listen/start')
+  async startPostListen(
+    @Req() req: RequestWithUser,
+    @Param('postId', ParseIntPipe) postId: number,
+    @Body() dto: StartPostListenDto,
+  ): Promise<StartPostListenResponseDto> {
+    return this.postsService.startPostListen(postId, req.user.userId, dto.sessionId);
+  }
+
+  @HttpPost(':postId/listen/progress')
+  async updatePostListenProgress(
+    @Req() req: RequestWithUser,
+    @Param('postId', ParseIntPipe) postId: number,
+    @Body() dto: UpdatePostListenProgressDto,
+  ): Promise<UpdatePostListenProgressResponseDto> {
+    return this.postsService.updatePostListenProgress(
+      postId,
+      req.user.userId,
+      dto.token,
+      dto.positionMs,
+    );
+  }
+
+  @HttpPost(':postId/listen/end')
+  async endPostListen(
+    @Req() req: RequestWithUser,
+    @Param('postId', ParseIntPipe) postId: number,
+    @Body() dto: EndPostListenDto,
+  ): Promise<EndPostListenResponseDto> {
+    return this.postsService.endPostListen(
+      postId,
+      req.user.userId,
+      dto.token,
+      dto.positionMs,
+      dto.sessionId,
+    );
   }
 
   @Get('comments/:commentId/replies')

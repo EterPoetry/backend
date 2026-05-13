@@ -2,6 +2,7 @@ import { User } from '../users/entities/user.entity';
 import { Post } from '../posts/entities/post.entity';
 import { PostTextPart } from '../posts/entities/post-text-part.entity';
 import { PostAudioProcessingJob } from '../posts/entities/post-audio-processing-job.entity';
+import { PostListenSession } from '../posts/entities/post-listen-session.entity';
 import { Category } from '../categories/entities/category.entity';
 import { PostCategory } from '../categories/entities/post-category.entity';
 import { PostReaction } from '../reactions/entities/post-reaction.entity';
@@ -22,6 +23,7 @@ export const ENTITIES = [
   Post,
   PostTextPart,
   PostAudioProcessingJob,
+  PostListenSession,
   Category,
   PostCategory,
   PostReaction,
