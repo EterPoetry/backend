@@ -1,16 +1,10 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
-export class GetProfileFollowListQueryDto {
-  @ApiPropertyOptional({ maxLength: 200 })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  search?: string;
-
+export class GetPostCommentsQueryDto {
   @ApiPropertyOptional({
-    example: 'eyJjcmVhdGVkQXQiOiIyMDI2LTA1LTEzVDEyOjAwOjAwLjAwMFoiLCJ1c2VySWQiOjQyfQ==',
+    example: '123',
     description: 'Cursor for keyset pagination.',
   })
   @IsOptional()

@@ -288,10 +288,13 @@ class PaginatedProfileFollowListResponseDto implements PaginatedProfileFollowLis
   total: number;
 
   @ApiProperty()
-  offset: number;
+  limit: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  nextCursor: string | null;
 
   @ApiProperty()
-  limit: number;
+  hasMore: boolean;
 }
 
 @Controller('profile')

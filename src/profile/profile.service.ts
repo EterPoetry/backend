@@ -77,8 +77,9 @@ export interface ProfileFollowListItemResponse {
 export interface PaginatedProfileFollowListResponse {
   items: ProfileFollowListItemResponse[];
   total: number;
-  offset: number;
   limit: number;
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 @Injectable()
@@ -435,25 +436,47 @@ export class ProfileService {
         'listUser.name AS name',
         'listUser.username AS username',
         'listUser.photo AS photo',
+        'relation.created_at AS relation_created_at',
         'listUserSubscription.status AS subscription_status',
         'requesterFollow.follower_id AS requester_follow_id',
       ])
       .orderBy('relation.created_at', 'DESC')
-      .addOrderBy('listUser.user_id', 'DESC')
-      .skip(query.offset)
-      .take(query.limit);
+      .addOrderBy('listUser.user_id', 'DESC');
+
+    const cursor = this.parseFollowCursor(query.cursor);
+    if (cursor) {
+      queryBuilder.andWhere(
+        new Brackets((qb) => {
+          qb.where('relation.created_at < :cursorCreatedAt', {
+            cursorCreatedAt: cursor.createdAt,
+          }).orWhere(
+            'relation.created_at = :cursorCreatedAt AND listUser.user_id < :cursorUserId',
+            {
+              cursorCreatedAt: cursor.createdAt,
+              cursorUserId: cursor.userId,
+            },
+          );
+        }),
+      );
+    }
+    queryBuilder.take(query.limit + 1);
 
     const rows = await queryBuilder.getRawMany<{
       user_id: number | string;
       name: string;
       username: string;
       photo: string | null;
+      relation_created_at: string | Date;
       subscription_status: SubscriptionStatus | null;
       requester_follow_id: number | string | null;
     }>();
 
+    const hasMore = rows.length > query.limit;
+    const pageRows = hasMore ? rows.slice(0, query.limit) : rows;
+    const nextCursor = hasMore ? this.buildFollowCursor(pageRows.at(-1)) : null;
+
     return {
-      items: rows.map((row) => ({
+      items: pageRows.map((row) => ({
         userId: Number(row.user_id),
         name: row.name,
         username: row.username,
@@ -462,8 +485,62 @@ export class ProfileService {
         isSubscribed: row.requester_follow_id !== null && row.requester_follow_id !== undefined,
       })),
       total,
-      offset: query.offset,
       limit: query.limit,
+      nextCursor,
+      hasMore,
     };
+  }
+
+  private parseFollowCursor(cursor?: string): { createdAt: string; userId: number } | null {
+    if (!cursor) {
+      return null;
+    }
+
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    } catch {
+      throw new BadRequestException('Cursor is invalid.');
+    }
+
+    if (
+      typeof decoded !== 'object' ||
+      decoded === null ||
+      typeof (decoded as { createdAt?: unknown }).createdAt !== 'string' ||
+      !Number.isInteger((decoded as { userId?: unknown }).userId)
+    ) {
+      throw new BadRequestException('Cursor is invalid.');
+    }
+
+    return {
+      createdAt: (decoded as { createdAt: string }).createdAt,
+      userId: (decoded as { userId: number }).userId,
+    };
+  }
+
+  private buildFollowCursor(
+    row:
+      | {
+          relation_created_at: string | Date;
+          user_id: number | string;
+        }
+      | undefined,
+  ): string | null {
+    if (!row) {
+      return null;
+    }
+
+    const createdAt =
+      row.relation_created_at instanceof Date
+        ? row.relation_created_at.toISOString()
+        : new Date(row.relation_created_at).toISOString();
+
+    return Buffer.from(
+      JSON.stringify({
+        createdAt,
+        userId: Number(row.user_id),
+      }),
+      'utf8',
+    ).toString('base64url');
   }
 }

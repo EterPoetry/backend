@@ -25,6 +25,14 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import {
+  CommentAuthorResponse,
+  CommentResponse,
+  CommentsService,
+  PaginatedCommentsResponse,
+} from '../comments/comments.service';
+import { CreateCommentDto } from '../comments/dto/create-comment.dto';
+import { GetPostCommentsQueryDto } from '../comments/dto/get-post-comments-query.dto';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { GetCategoriesQueryDto } from './dto/get-categories-query.dto';
 import { GetMyPostsQueryDto } from './dto/get-my-posts-query.dto';
@@ -54,6 +62,66 @@ class CategoryResponseDto implements CategoryResponse {
 
   @ApiPropertyOptional({ nullable: true })
   categoryDescription: string | null;
+}
+
+class CommentAuthorResponseDto implements CommentAuthorResponse {
+  @ApiProperty()
+  userId: number;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty()
+  username: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  photo: string | null;
+
+  @ApiProperty()
+  isPremium: boolean;
+}
+
+class CommentResponseDto implements CommentResponse {
+  @ApiProperty()
+  commentId: number;
+
+  @ApiProperty()
+  postId: number;
+
+  @ApiProperty()
+  commentText: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  replyToCommentId: number | null;
+
+  @ApiProperty()
+  repliesCount: number;
+
+  @ApiProperty()
+  likesCount: number;
+
+  @ApiProperty()
+  isLiked: boolean;
+
+  @ApiProperty({ type: () => CommentAuthorResponseDto })
+  author: CommentAuthorResponseDto;
+}
+
+class PaginatedCommentsResponseDto implements PaginatedCommentsResponse {
+  @ApiProperty({ type: [CommentResponseDto] })
+  items: CommentResponseDto[];
+
+  @ApiProperty()
+  total: number;
+
+  @ApiProperty()
+  limit: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  nextCursor: string | null;
+
+  @ApiProperty()
+  hasMore: boolean;
 }
 
 class PostAuthorProfileResponseDto implements PostAuthorProfileResponse {
@@ -146,6 +214,7 @@ class PaginatedPostsResponseDto implements PaginatedPostsResponse {
 export class PostsController {
   constructor(
     private readonly postsService: PostsService,
+    private readonly commentsService: CommentsService,
     private readonly postAudioProcessingQueueService: PostAudioProcessingQueueService,
   ) {}
 
@@ -168,6 +237,57 @@ export class PostsController {
     @Param('postId', ParseIntPipe) postId: number,
   ): Promise<PostResponseDto> {
     return this.postsService.getPostDetails(postId, req.user.userId);
+  }
+
+  @Get(':postId/comments')
+  async getPostComments(
+    @Req() req: RequestWithUser,
+    @Param('postId', ParseIntPipe) postId: number,
+    @Query() query: GetPostCommentsQueryDto,
+  ): Promise<PaginatedCommentsResponseDto> {
+    return this.commentsService.getPostComments(postId, req.user.userId, query);
+  }
+
+  @Get('comments/:commentId/replies')
+  async getCommentReplies(
+    @Req() req: RequestWithUser,
+    @Param('commentId', ParseIntPipe) commentId: number,
+    @Query() query: GetPostCommentsQueryDto,
+  ): Promise<PaginatedCommentsResponseDto> {
+    return this.commentsService.getCommentReplies(commentId, req.user.userId, query);
+  }
+
+  @HttpPost(':postId/comments')
+  async createComment(
+    @Req() req: RequestWithUser,
+    @Param('postId', ParseIntPipe) postId: number,
+    @Body() dto: CreateCommentDto,
+  ): Promise<CommentResponseDto> {
+    return this.commentsService.createComment(postId, req.user.userId, dto);
+  }
+
+  @HttpPost('comments/:commentId/like')
+  async likeComment(
+    @Req() req: RequestWithUser,
+    @Param('commentId', ParseIntPipe) commentId: number,
+  ): Promise<{ ok: true }> {
+    return this.commentsService.likeComment(commentId, req.user.userId);
+  }
+
+  @Delete('comments/:commentId/like')
+  async unlikeComment(
+    @Req() req: RequestWithUser,
+    @Param('commentId', ParseIntPipe) commentId: number,
+  ): Promise<{ ok: true }> {
+    return this.commentsService.unlikeComment(commentId, req.user.userId);
+  }
+
+  @Delete('comments/:commentId')
+  async deleteComment(
+    @Req() req: RequestWithUser,
+    @Param('commentId', ParseIntPipe) commentId: number,
+  ): Promise<{ ok: true }> {
+    return this.commentsService.deleteComment(commentId, req.user.userId);
   }
 
   @Patch(':postId')

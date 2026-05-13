@@ -1,4 +1,4 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { PostComment } from '../../comments/entities/post-comment.entity';
 import { User } from '../../users/entities/user.entity';
 
@@ -11,12 +11,14 @@ export class CommentReaction {
   @ManyToOne(() => PostComment, (postComment) => postComment.reactions, {
     onDelete: 'CASCADE',
   })
+  @JoinColumn({ name: 'post_comment_id' })
   postComment: PostComment;
 
   @Column({ name: 'post_comment_id', type: 'integer' })
   postCommentId: number;
 
   @ManyToOne(() => User, (user) => user.commentReactions, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'user_id' })
   user: User;
 
   @Column({ name: 'user_id', type: 'integer' })

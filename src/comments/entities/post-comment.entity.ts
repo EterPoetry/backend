@@ -1,6 +1,7 @@
 import {
   Column,
   Entity,
+  JoinColumn,
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
@@ -15,12 +16,14 @@ export class PostComment {
   postCommentId: number;
 
   @ManyToOne(() => Post, (post) => post.comments, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'post_id' })
   post: Post;
 
   @Column({ name: 'post_id', type: 'integer' })
   postId: number;
 
   @ManyToOne(() => User, (user) => user.postComments, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'comment_author_id' })
   commentAuthor: User;
 
   @Column({ name: 'comment_author_id', type: 'integer' })
@@ -33,6 +36,7 @@ export class PostComment {
     onDelete: 'SET NULL',
     nullable: true,
   })
+  @JoinColumn({ name: 'reply_to_comment_id' })
   replyToComment: PostComment | null;
 
   @Column({ name: 'reply_to_comment_id', type: 'integer', nullable: true })
