@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { PostComplaint } from '../complaints/entities/post-complaint.entity';
 import { Follower } from '../followers/entities/follower.entity';
 import { Post } from '../posts/entities/post.entity';
+import { PostsModule } from '../posts/posts.module';
 import { StorageModule } from '../storage/storage.module';
 import { Subscription } from '../subscriptions/entities/subscription.entity';
 import { User } from '../users/entities/user.entity';
@@ -14,6 +15,7 @@ import { ProfileService } from './profile.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Follower, Post, Subscription, PostComplaint]),
+    PostsModule,
     StorageModule,
     UsersModule,
   ],

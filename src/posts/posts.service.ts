@@ -138,6 +138,21 @@ export class PostsService {
     authorId: number,
     query: GetMyPostsQueryDto,
   ): Promise<PaginatedPostsResponse> {
+    return this.getPostsByAuthor(authorId, query);
+  }
+
+  async getPublishedPostsByAuthor(
+    authorId: number,
+    query: GetMyPostsQueryDto,
+  ): Promise<PaginatedPostsResponse> {
+    return this.getPostsByAuthor(authorId, query, PostStatus.PUBLISHED);
+  }
+
+  private async getPostsByAuthor(
+    authorId: number,
+    query: GetMyPostsQueryDto,
+    status?: PostStatus,
+  ): Promise<PaginatedPostsResponse> {
     const queryBuilder = this.postsRepository
       .createQueryBuilder('post')
       .leftJoinAndSelect('post.author', 'author')
@@ -151,6 +166,10 @@ export class PostsService {
       )
       .loadRelationCountAndMap('post.commentsCount', 'post.comments')
       .where('post.author_id = :authorId', { authorId });
+
+    if (status) {
+      queryBuilder.andWhere('post.status = :status', { status });
+    }
 
     if (query.search?.trim()) {
       queryBuilder.andWhere(

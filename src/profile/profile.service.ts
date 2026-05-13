@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
@@ -6,10 +6,13 @@ import { ComplaintStatus } from '../common/enums/complaint-status.enum';
 import { PostComplaint } from '../complaints/entities/post-complaint.entity';
 import { Follower } from '../followers/entities/follower.entity';
 import { Post } from '../posts/entities/post.entity';
+import { GetMyPostsQueryDto } from '../posts/dto/get-my-posts-query.dto';
+import { PaginatedPostsResponse, PostsService } from '../posts/posts.service';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { rethrowUserUniqueConstraint } from '../users/user-conflict.util';
 import { User } from '../users/entities/user.entity';
 import { UsernameService } from '../users/username.service';
+import { GetProfileFollowListQueryDto } from './dto/get-profile-follow-list-query.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AvatarStorageService, UploadedAvatar } from './avatar-storage.service';
 
@@ -31,6 +34,19 @@ export interface ProfileResponse {
   maxViolationsBeforeBlock: number;
 }
 
+export interface PublicProfileResponse {
+  userId: number;
+  name: string;
+  username: string;
+  photo: string | null;
+  isPremium: boolean;
+  isSubscribed: boolean;
+  createdAt: Date;
+  followersCount: number;
+  followingCount: number;
+  postsCount: number;
+}
+
 export interface ActiveViolationResponse {
   complaintId: number;
   complaintReason: string;
@@ -49,6 +65,22 @@ export interface ActiveViolationTargetPostResponse {
   createdAt: Date;
 }
 
+export interface ProfileFollowListItemResponse {
+  userId: number;
+  name: string;
+  username: string;
+  photo: string | null;
+  isPremium: boolean;
+  isSubscribed: boolean;
+}
+
+export interface PaginatedProfileFollowListResponse {
+  items: ProfileFollowListItemResponse[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 @Injectable()
 export class ProfileService {
   constructor(
@@ -60,6 +92,7 @@ export class ProfileService {
     private readonly postsRepository: Repository<Post>,
     @InjectRepository(PostComplaint)
     private readonly complaintsRepository: Repository<PostComplaint>,
+    private readonly postsService: PostsService,
     private readonly configService: ConfigService,
     private readonly avatarStorageService: AvatarStorageService,
     private readonly usernameService: UsernameService,
@@ -76,6 +109,19 @@ export class ProfileService {
     }
 
     return this.buildProfileResponse(user);
+  }
+
+  async getProfileById(profileUserId: number, requesterUserId: number): Promise<PublicProfileResponse> {
+    const user = await this.usersRepository.findOne({
+      where: { userId: profileUserId },
+      relations: { subscription: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    return this.buildPublicProfileResponse(user, requesterUserId);
   }
 
   async updateMyProfile(
@@ -177,6 +223,83 @@ export class ProfileService {
     }));
   }
 
+  async getMyFollowers(
+    userId: number,
+    query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponse> {
+    return this.getFollowList(userId, userId, query, 'followers');
+  }
+
+  async getMyFollowing(
+    userId: number,
+    query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponse> {
+    return this.getFollowList(userId, userId, query, 'following');
+  }
+
+  async getProfilePublishedPosts(
+    profileUserId: number,
+    query: GetMyPostsQueryDto,
+  ): Promise<PaginatedPostsResponse> {
+    await this.ensureUserExists(profileUserId);
+    return this.postsService.getPublishedPostsByAuthor(profileUserId, query);
+  }
+
+  async followUser(targetUserId: number, followerUserId: number): Promise<PublicProfileResponse> {
+    if (targetUserId === followerUserId) {
+      throw new BadRequestException('You cannot follow yourself.');
+    }
+
+    const targetUser = await this.usersRepository.findOne({
+      where: { userId: targetUserId },
+      relations: { subscription: true },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException('User not found.');
+    }
+
+    const alreadyFollowing = await this.followersRepository.exist({
+      where: {
+        followerUserId,
+        targetUserId,
+      },
+    });
+
+    if (!alreadyFollowing) {
+      await this.followersRepository.save(
+        this.followersRepository.create({
+          followerUserId,
+          targetUserId,
+        }),
+      );
+    }
+
+    return this.buildPublicProfileResponse(targetUser, followerUserId);
+  }
+
+  async unfollowUser(targetUserId: number, followerUserId: number): Promise<PublicProfileResponse> {
+    if (targetUserId === followerUserId) {
+      throw new BadRequestException('You cannot unfollow yourself.');
+    }
+
+    const targetUser = await this.usersRepository.findOne({
+      where: { userId: targetUserId },
+      relations: { subscription: true },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException('User not found.');
+    }
+
+    await this.followersRepository.delete({
+      followerUserId,
+      targetUserId,
+    });
+
+    return this.buildPublicProfileResponse(targetUser, followerUserId);
+  }
+
   private async buildProfileResponse(user: User): Promise<ProfileResponse> {
     const [followersCount, followingCount, postsCount, currentViolationsCount] = await Promise.all([
       this.followersRepository.countBy({ targetUserId: user.userId }),
@@ -199,6 +322,36 @@ export class ProfileService {
       postsCount,
       currentViolationsCount,
       maxViolationsBeforeBlock: this.getMaxViolationsBeforeBlock(),
+    };
+  }
+
+  private async buildPublicProfileResponse(
+    user: User,
+    requesterUserId: number,
+  ): Promise<PublicProfileResponse> {
+    const [followersCount, followingCount, postsCount, isSubscribed] = await Promise.all([
+      this.followersRepository.countBy({ targetUserId: user.userId }),
+      this.followersRepository.countBy({ followerUserId: user.userId }),
+      this.postsRepository.countBy({ authorId: user.userId }),
+      this.followersRepository.exist({
+        where: {
+          followerUserId: requesterUserId,
+          targetUserId: user.userId,
+        },
+      }),
+    ]);
+
+    return {
+      userId: user.userId,
+      name: user.name,
+      username: user.username,
+      photo: this.avatarStorageService.getAvatarUrl(user.photo),
+      isPremium: user.subscription?.status === SubscriptionStatus.ACTIVE,
+      isSubscribed,
+      createdAt: user.createdAt,
+      followersCount,
+      followingCount,
+      postsCount,
     };
   }
 
@@ -234,5 +387,83 @@ export class ProfileService {
     if (!exists) {
       throw new NotFoundException('User not found.');
     }
+  }
+
+  private async getFollowList(
+    profileUserId: number,
+    requesterUserId: number,
+    query: GetProfileFollowListQueryDto,
+    mode: 'followers' | 'following',
+  ): Promise<PaginatedProfileFollowListResponse> {
+    await this.ensureUserExists(profileUserId);
+
+    const relationToListUserColumn =
+      mode === 'followers' ? 'relation.follower_user_id' : 'relation.target_user_id';
+    const relationToProfileColumn =
+      mode === 'followers' ? 'relation.target_user_id' : 'relation.follower_user_id';
+
+    const queryBuilder = this.usersRepository
+      .createQueryBuilder('listUser')
+      .innerJoin(
+        Follower,
+        'relation',
+        `${relationToListUserColumn} = listUser.user_id AND ${relationToProfileColumn} = :profileUserId`,
+        { profileUserId },
+      )
+      .leftJoin(
+        Follower,
+        'requesterFollow',
+        'requesterFollow.follower_user_id = :requesterUserId AND requesterFollow.target_user_id = listUser.user_id',
+        { requesterUserId },
+      )
+      .leftJoin('listUser.subscription', 'listUserSubscription');
+
+    if (query.search?.trim()) {
+      queryBuilder.andWhere(
+        new Brackets((qb) => {
+          qb.where('listUser.name ILIKE :search').orWhere('listUser.username ILIKE :search');
+        }),
+        { search: `%${query.search.trim()}%` },
+      );
+    }
+
+    const total = await queryBuilder.getCount();
+
+    queryBuilder
+      .select([
+        'listUser.user_id AS user_id',
+        'listUser.name AS name',
+        'listUser.username AS username',
+        'listUser.photo AS photo',
+        'listUserSubscription.status AS subscription_status',
+        'requesterFollow.follower_id AS requester_follow_id',
+      ])
+      .orderBy('relation.created_at', 'DESC')
+      .addOrderBy('listUser.user_id', 'DESC')
+      .skip(query.offset)
+      .take(query.limit);
+
+    const rows = await queryBuilder.getRawMany<{
+      user_id: number | string;
+      name: string;
+      username: string;
+      photo: string | null;
+      subscription_status: SubscriptionStatus | null;
+      requester_follow_id: number | string | null;
+    }>();
+
+    return {
+      items: rows.map((row) => ({
+        userId: Number(row.user_id),
+        name: row.name,
+        username: row.username,
+        photo: this.avatarStorageService.getAvatarUrl(row.photo),
+        isPremium: row.subscription_status === SubscriptionStatus.ACTIVE,
+        isSubscribed: row.requester_follow_id !== null && row.requester_follow_id !== undefined,
+      })),
+      total,
+      offset: query.offset,
+      limit: query.limit,
+    };
   }
 }
