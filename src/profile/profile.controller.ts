@@ -202,8 +202,8 @@ class PostResponseDto implements PostResponse {
   @ApiPropertyOptional({ nullable: true })
   originAuthorName: string | null;
 
-  @ApiProperty({ type: [PostTextSynchronizationItemResponseDto] })
-  textSynchronization: PostTextSynchronizationItemResponseDto[];
+  @ApiPropertyOptional({ type: [PostTextSynchronizationItemResponseDto] })
+  textSynchronization?: PostTextSynchronizationItemResponseDto[];
 
   @ApiProperty({ type: [CategoryResponseDto] })
   categories: CategoryResponseDto[];

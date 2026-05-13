@@ -21,6 +21,7 @@ import {
   MyPostsSortBy,
   SortOrder,
 } from './dto/get-my-posts-query.dto';
+import { GetPopularPostsQueryDto } from './dto/get-popular-posts-query.dto';
 import { PostTextSynchronizationItemDto } from './dto/update-post-text-synchronization.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { Category } from '../categories/entities/category.entity';
@@ -59,7 +60,7 @@ export interface PostResponse {
   likesCount: number;
   commentsCount: number;
   originAuthorName: string | null;
-  textSynchronization: PostTextSynchronizationItemResponse[];
+  textSynchronization?: PostTextSynchronizationItemResponse[];
   categories: CategoryResponse[];
   authorId: number;
   author: PostAuthorProfileResponse;
@@ -109,6 +110,7 @@ const LISTEN_COOLDOWN_HOURS = 12;
 const LISTEN_PROGRESS_MAX_SPEED_RATIO = 1.25;
 const LISTEN_PROGRESS_TIME_SKEW_MS = 1500;
 const LISTEN_POSITION_OVERSHOOT_MS = 3000;
+const POPULAR_POSTS_WINDOW_DAYS = 30;
 
 @Injectable()
 export class PostsService {
@@ -203,6 +205,73 @@ export class PostsService {
     query: GetMyPostsQueryDto,
   ): Promise<PaginatedPostsResponse> {
     return this.getPostsByAuthor(authorId, query, PostStatus.PUBLISHED);
+  }
+
+  async getPopularPosts(query: GetPopularPostsQueryDto): Promise<PaginatedPostsResponse> {
+    const total = await this.postsRepository
+      .createQueryBuilder('post')
+      .where('post.status = :status', { status: PostStatus.PUBLISHED })
+      .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
+      .getCount();
+
+    const rankedRows = await this.postsRepository
+      .createQueryBuilder('post')
+      .leftJoin(
+        'post_reactions',
+        'postReaction',
+        'postReaction.post_id = post.post_id AND postReaction.reaction_type = :reactionType',
+        {
+          reactionType: ReactionType.LIKE,
+        },
+      )
+      .leftJoin('post_comments', 'postComment', 'postComment.post_id = post.post_id')
+      .where('post.status = :status', { status: PostStatus.PUBLISHED })
+      .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
+      .select('post.post_id', 'postId')
+      .addSelect(
+        `(
+          (
+            post.listens
+            + COUNT(DISTINCT postReaction.post_reaction_id) * 3
+            + COUNT(DISTINCT postComment.post_comment_id) * 5
+          ) / POWER(
+            GREATEST(EXTRACT(EPOCH FROM (NOW() - post.created_at)) / 3600 + 2, 2),
+            0.8
+          )
+        )`,
+        'score',
+      )
+      .groupBy('post.post_id')
+      .orderBy('score', 'DESC')
+      .addOrderBy('post.created_at', 'DESC')
+      .addOrderBy('post.post_id', 'DESC')
+      .offset(query.offset)
+      .limit(query.limit)
+      .getRawMany<{ postId: string; score: string }>();
+
+    const postIds = rankedRows.map((row) => Number(row.postId));
+    if (!postIds.length) {
+      return {
+        items: [],
+        total,
+        offset: query.offset,
+      };
+    }
+
+    const posts = await this.createPostDetailsQueryBuilder()
+      .where('post.post_id IN (:...postIds)', { postIds })
+      .getMany();
+
+    const postsById = new Map(posts.map((post) => [post.postId, post]));
+
+    return {
+      items: postIds
+        .map((postId) => postsById.get(postId))
+        .filter((post): post is Post => Boolean(post))
+        .map((post) => this.buildPostResponse(post, { includeTextSynchronization: false })),
+      total,
+      offset: query.offset,
+    };
   }
 
   async startPostListen(
@@ -425,7 +494,9 @@ export class PostsService {
     const [posts, total] = await queryBuilder.getManyAndCount();
 
     return {
-      items: posts.map((post) => this.buildPostResponse(post)),
+      items: posts.map((post) =>
+        this.buildPostResponse(post, { includeTextSynchronization: false }),
+      ),
       total,
       offset,
     };
@@ -655,7 +726,12 @@ export class PostsService {
     return categories.map((category) => this.buildCategoryResponse(category));
   }
 
-  buildPostResponse(post: Post): PostResponse {
+  buildPostResponse(
+    post: Post,
+    options: { includeTextSynchronization?: boolean } = {},
+  ): PostResponse {
+    const includeTextSynchronization = options.includeTextSynchronization ?? true;
+
     return {
       postId: post.postId,
       title: post.title,
@@ -669,13 +745,17 @@ export class PostsService {
       likesCount: post.likesCount ?? 0,
       commentsCount: post.commentsCount ?? 0,
       originAuthorName: post.originAuthorName,
-      textSynchronization: (post.textParts ?? [])
-        .slice()
-        .sort((left, right) => left.lineIndex - right.lineIndex)
-        .map((textPart) => ({
-          lineIndex: textPart.lineIndex,
-          audioStartMomentMs: textPart.audioStartMomentMs,
-        })),
+      ...(includeTextSynchronization
+        ? {
+            textSynchronization: (post.textParts ?? [])
+              .slice()
+              .sort((left, right) => left.lineIndex - right.lineIndex)
+              .map((textPart) => ({
+                lineIndex: textPart.lineIndex,
+                audioStartMomentMs: textPart.audioStartMomentMs,
+              })),
+          }
+        : {}),
       categories: (post.postCategories ?? [])
         .map((postCategory) => postCategory.category)
         .filter((category): category is Category => Boolean(category))

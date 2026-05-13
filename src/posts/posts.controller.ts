@@ -37,6 +37,7 @@ import { PostStatus } from '../common/enums/post-status.enum';
 import { GetCategoriesQueryDto } from './dto/get-categories-query.dto';
 import { EndPostListenDto } from './dto/end-post-listen.dto';
 import { GetMyPostsQueryDto } from './dto/get-my-posts-query.dto';
+import { GetPopularPostsQueryDto } from './dto/get-popular-posts-query.dto';
 import { StartPostListenDto } from './dto/start-post-listen.dto';
 import { UpdatePostListenProgressDto } from './dto/update-post-listen-progress.dto';
 import { UpdatePostTextSynchronizationDto } from './dto/update-post-text-synchronization.dto';
@@ -196,8 +197,8 @@ class PostResponseDto implements PostResponse {
   @ApiPropertyOptional({ nullable: true })
   originAuthorName: string | null;
 
-  @ApiProperty({ type: [PostTextSynchronizationItemResponseDto] })
-  textSynchronization: PostTextSynchronizationItemResponseDto[];
+  @ApiPropertyOptional({ type: [PostTextSynchronizationItemResponseDto] })
+  textSynchronization?: PostTextSynchronizationItemResponseDto[];
 
   @ApiProperty({ type: [CategoryResponseDto] })
   categories: CategoryResponseDto[];
@@ -287,6 +288,13 @@ export class PostsController {
   @Get('categories')
   async getCategories(@Query() query: GetCategoriesQueryDto): Promise<CategoryResponseDto[]> {
     return this.postsService.getCategories(query);
+  }
+
+  @Get('popular')
+  async getPopularPosts(
+    @Query() query: GetPopularPostsQueryDto,
+  ): Promise<PaginatedPostsResponseDto> {
+    return this.postsService.getPopularPosts(query);
   }
 
   @Get(':postId')
