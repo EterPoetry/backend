@@ -1,13 +1,24 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { PostAudioProcessingJobStatus } from '../common/enums/post-audio-processing-job-status.enum';
 import { Post } from './entities/post.entity';
 import { PostAudioProcessingJob } from './entities/post-audio-processing-job.entity';
+import { PostTextPart } from './entities/post-text-part.entity';
 import { PostAudioStorageService, UploadedPostAudio } from './post-audio-storage.service';
 import { PostAudioTranscodingService } from './post-audio-transcoding.service';
-import { GetMyPostsQueryDto, MyPostsSortBy, SortOrder } from './dto/get-my-posts-query.dto';
+import {
+  GetMyPostsQueryDto,
+  MyPostsSortBy,
+  SortOrder,
+} from './dto/get-my-posts-query.dto';
+import { PostTextSynchronizationItemDto } from './dto/update-post-text-synchronization.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { Category } from '../categories/entities/category.entity';
 import { PostCategory } from '../categories/entities/post-category.entity';
@@ -45,11 +56,17 @@ export interface PostResponse {
   likesCount: number;
   commentsCount: number;
   originAuthorName: string | null;
+  textSynchronization: PostTextSynchronizationItemResponse[];
   categories: CategoryResponse[];
   authorId: number;
   author: PostAuthorProfileResponse;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface PostTextSynchronizationItemResponse {
+  lineIndex: number;
+  audioStartMomentMs: number;
 }
 
 export interface PaginatedPostsResponse {
@@ -70,6 +87,8 @@ export class PostsService {
     private readonly categoriesRepository: Repository<Category>,
     @InjectRepository(PostCategory)
     private readonly postCategoriesRepository: Repository<PostCategory>,
+    @InjectRepository(PostTextPart)
+    private readonly postTextPartsRepository: Repository<PostTextPart>,
     private readonly postAudioStorageService: PostAudioStorageService,
     private readonly postAudioTranscodingService: PostAudioTranscodingService,
     private readonly publicConfigService: PublicConfigService,
@@ -157,6 +176,7 @@ export class PostsService {
       .createQueryBuilder('post')
       .leftJoinAndSelect('post.author', 'author')
       .leftJoinAndSelect('author.subscription', 'authorSubscription')
+      .leftJoinAndSelect('post.textParts', 'textPart')
       .leftJoinAndSelect('post.postCategories', 'postCategory')
       .leftJoinAndSelect('postCategory.category', 'category')
       .loadRelationCountAndMap('post.likesCount', 'post.postReactions', 'postReaction', (queryBuilder) =>
@@ -229,39 +249,67 @@ export class PostsService {
     dto: UpdatePostDto,
   ): Promise<PostResponse> {
     const post = await this.requireOwnedPost(postId, requesterUserId);
-    const updatePayload: Partial<Post> = {};
 
     if (dto.title !== undefined) {
-      updatePayload.title = dto.title;
+      post.title = dto.title;
     }
 
     if (dto.description !== undefined) {
-      updatePayload.description = dto.description;
+      post.description = dto.description;
     }
 
     if (dto.text !== undefined) {
-      updatePayload.text = dto.text;
+      post.text = dto.text;
     }
 
     if (dto.originAuthorName !== undefined) {
-      updatePayload.originAuthorName = dto.originAuthorName;
+      post.originAuthorName = dto.originAuthorName;
     }
 
     if (dto.audioFileName !== undefined) {
-      updatePayload.audioFileName = dto.audioFileName;
-    }
-
-    if (dto.categoryIds !== undefined) {
-      await this.syncPostCategories(post.postId, dto.categoryIds);
+      post.audioFileName = dto.audioFileName;
     }
 
     if (post.status === PostStatus.PROCESSING) {
       throw new ForbiddenException('Post is still processing and cannot be edited.');
     }
 
-    if (Object.keys(updatePayload).length > 0) {
-      await this.postsRepository.update(post.postId, updatePayload);
-    }
+    await this.dataSource.transaction(async (manager) => {
+      const updatePayload: Partial<Post> = {};
+
+      if (dto.title !== undefined) {
+        updatePayload.title = dto.title;
+      }
+
+      if (dto.description !== undefined) {
+        updatePayload.description = dto.description;
+      }
+
+      if (dto.text !== undefined) {
+        updatePayload.text = dto.text;
+      }
+
+      if (dto.originAuthorName !== undefined) {
+        updatePayload.originAuthorName = dto.originAuthorName;
+      }
+
+      if (dto.audioFileName !== undefined) {
+        updatePayload.audioFileName = dto.audioFileName;
+      }
+
+      if (dto.categoryIds !== undefined) {
+        await this.syncPostCategories(manager, post.postId, dto.categoryIds);
+      }
+
+      if (dto.text !== undefined) {
+        await this.removeOutdatedTextSynchronization(manager, post.postId, dto.text);
+      }
+
+      if (Object.keys(updatePayload).length > 0) {
+        await manager.getRepository(Post).update(post.postId, updatePayload);
+      }
+    });
+
     let updatedPost = await this.getPostById(post.postId);
     if (!updatedPost) {
       throw new NotFoundException('Post not found.');
@@ -277,6 +325,32 @@ export class PostsService {
       if (!updatedPost) {
         throw new NotFoundException('Post not found.');
       }
+    }
+
+    return this.buildPostResponse(updatedPost);
+  }
+
+  async updatePostTextSynchronization(
+    postId: number,
+    requesterUserId: number,
+    textSynchronization: PostTextSynchronizationItemDto[],
+  ): Promise<PostResponse> {
+    const post = await this.requireOwnedPost(postId, requesterUserId);
+
+    if (post.status === PostStatus.PROCESSING) {
+      throw new ForbiddenException('Post is still processing and cannot be edited.');
+    }
+
+    this.validateTextSynchronization(post.text, post.audioDurationSeconds, textSynchronization);
+
+    await this.dataSource.transaction(async (manager) => {
+      await this.ensurePremiumUser(manager, requesterUserId);
+      await this.syncPostTextParts(manager, post.postId, textSynchronization);
+    });
+
+    const updatedPost = await this.getPostById(post.postId);
+    if (!updatedPost) {
+      throw new NotFoundException('Post not found.');
     }
 
     return this.buildPostResponse(updatedPost);
@@ -313,6 +387,7 @@ export class PostsService {
           audioDurationSeconds,
           status: PostStatus.PROCESSING,
         });
+        await manager.getRepository(PostTextPart).delete({ postId: post.postId });
 
         await manager.getRepository(PostAudioProcessingJob).delete({ postId: post.postId });
         await manager.getRepository(PostAudioProcessingJob).save(
@@ -379,6 +454,13 @@ export class PostsService {
       likesCount: post.likesCount ?? 0,
       commentsCount: post.commentsCount ?? 0,
       originAuthorName: post.originAuthorName,
+      textSynchronization: (post.textParts ?? [])
+        .slice()
+        .sort((left, right) => left.lineIndex - right.lineIndex)
+        .map((textPart) => ({
+          lineIndex: textPart.lineIndex,
+          audioStartMomentMs: textPart.audioStartMomentMs,
+        })),
       categories: (post.postCategories ?? [])
         .map((postCategory) => postCategory.category)
         .filter((category): category is Category => Boolean(category))
@@ -418,10 +500,14 @@ export class PostsService {
     return post;
   }
 
-  private async syncPostCategories(postId: number, categoryIds: number[]): Promise<void> {
+  private async syncPostCategories(
+    manager: EntityManager,
+    postId: number,
+    categoryIds: number[],
+  ): Promise<void> {
     const normalizedCategoryIds = [...new Set(categoryIds)];
     const categories = normalizedCategoryIds.length
-      ? await this.categoriesRepository.find({
+      ? await manager.getRepository(Category).find({
           where: {
             categoryId: In(normalizedCategoryIds),
           },
@@ -439,20 +525,66 @@ export class PostsService {
       );
     }
 
-    await this.postCategoriesRepository.delete({ postId });
+    await manager.getRepository(PostCategory).delete({ postId });
 
     if (!normalizedCategoryIds.length) {
       return;
     }
 
-    await this.postCategoriesRepository.save(
+    await manager.getRepository(PostCategory).save(
       normalizedCategoryIds.map((categoryId) =>
-        this.postCategoriesRepository.create({
+        manager.getRepository(PostCategory).create({
           postId,
           categoryId,
         }),
       ),
     );
+  }
+
+  private async syncPostTextParts(
+    manager: EntityManager,
+    postId: number,
+    textSynchronization: PostTextSynchronizationItemDto[],
+  ): Promise<void> {
+    await manager.getRepository(PostTextPart).delete({ postId });
+
+    if (!textSynchronization.length) {
+      return;
+    }
+
+    await manager.getRepository(PostTextPart).save(
+      textSynchronization
+        .slice()
+        .sort((left, right) => left.lineIndex - right.lineIndex)
+        .map((item) =>
+          manager.getRepository(PostTextPart).create({
+            postId,
+            lineIndex: item.lineIndex,
+            audioStartMomentMs: item.audioStartMomentMs,
+          }),
+        ),
+    );
+  }
+
+  private async removeOutdatedTextSynchronization(
+    manager: EntityManager,
+    postId: number,
+    text: string,
+  ): Promise<void> {
+    if (!this.hasNonEmptyValue(text)) {
+      await manager.getRepository(PostTextPart).delete({ postId });
+      return;
+    }
+
+    const lastLineIndex = text.split(/\r?\n/).length - 1;
+
+    await manager
+      .getRepository(PostTextPart)
+      .createQueryBuilder()
+      .delete()
+      .where('post_id = :postId', { postId })
+      .andWhere('line_index > :lastLineIndex', { lastLineIndex })
+      .execute();
   }
 
   private buildCategoryResponse(category: Category): CategoryResponse {
@@ -499,6 +631,7 @@ export class PostsService {
       .createQueryBuilder('post')
       .leftJoinAndSelect('post.author', 'author')
       .leftJoinAndSelect('author.subscription', 'authorSubscription')
+      .leftJoinAndSelect('post.textParts', 'textPart')
       .leftJoinAndSelect('post.postCategories', 'postCategory')
       .leftJoinAndSelect('postCategory.category', 'category')
       .loadRelationCountAndMap('post.likesCount', 'post.postReactions', 'postReaction', (queryBuilder) =>
@@ -507,5 +640,76 @@ export class PostsService {
         }),
       )
       .loadRelationCountAndMap('post.commentsCount', 'post.comments');
+  }
+
+  private validateTextSynchronization(
+    text: string | null,
+    audioDurationSeconds: number | null,
+    textSynchronization: PostTextSynchronizationItemDto[],
+  ): void {
+    if (!this.hasNonEmptyValue(text)) {
+      throw new BadRequestException(
+        'Text synchronization can only be saved when the post text is filled.',
+      );
+    }
+
+    const lines = (text ?? '').split(/\r?\n/);
+    const maxTimestampMs =
+      typeof audioDurationSeconds === 'number' ? Math.round(audioDurationSeconds * 1000) : null;
+    const firstLineSynchronization = textSynchronization.find((item) => item.lineIndex === 0);
+
+    if (textSynchronization.length > 0) {
+      if (!firstLineSynchronization) {
+        throw new BadRequestException(
+          'Text synchronization must include lineIndex 0 when synchronization is provided.',
+        );
+      }
+
+      if (firstLineSynchronization.audioStartMomentMs !== 0) {
+        throw new BadRequestException(
+          'Text synchronization for lineIndex 0 must start at 0 milliseconds.',
+        );
+      }
+    }
+
+    const sortedSynchronization = textSynchronization
+      .slice()
+      .sort((left, right) => left.lineIndex - right.lineIndex);
+
+    for (let index = 1; index < sortedSynchronization.length; index += 1) {
+      const previousItem = sortedSynchronization[index - 1];
+      const currentItem = sortedSynchronization[index];
+
+      if (currentItem.audioStartMomentMs <= previousItem.audioStartMomentMs) {
+        throw new BadRequestException(
+          `Text synchronization timestamps must increase with line order: lineIndex ${currentItem.lineIndex} must be greater than lineIndex ${previousItem.lineIndex}.`,
+        );
+      }
+    }
+
+    for (const item of textSynchronization) {
+      if (item.lineIndex >= lines.length) {
+        throw new BadRequestException(
+          `Text synchronization lineIndex ${item.lineIndex} does not exist in post text.`,
+        );
+      }
+
+      if (maxTimestampMs !== null && item.audioStartMomentMs > maxTimestampMs) {
+        throw new BadRequestException(
+          `Text synchronization timestamp ${item.audioStartMomentMs} exceeds audio duration.`,
+        );
+      }
+    }
+  }
+
+  private async ensurePremiumUser(manager: EntityManager, userId: number): Promise<void> {
+    const user = await manager.getRepository(User).findOne({
+      where: { userId },
+      relations: { subscription: true },
+    });
+
+    if (user?.subscription?.status !== SubscriptionStatus.ACTIVE) {
+      throw new ForbiddenException('Text synchronization is available only for premium users.');
+    }
   }
 }

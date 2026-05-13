@@ -1,9 +1,9 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
-  ArrayMaxSize,
   ArrayUnique,
   IsArray,
+  ArrayMaxSize,
   IsInt,
   IsNotEmpty,
   IsOptional,

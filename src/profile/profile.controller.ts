@@ -31,6 +31,7 @@ import {
   PaginatedPostsResponse,
   PostAuthorProfileResponse,
   PostResponse,
+  PostTextSynchronizationItemResponse,
 } from '../posts/posts.service';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { UploadedAvatar } from './avatar-storage.service';
@@ -154,6 +155,14 @@ class PostAuthorProfileResponseDto implements PostAuthorProfileResponse {
   isPremium: boolean;
 }
 
+class PostTextSynchronizationItemResponseDto implements PostTextSynchronizationItemResponse {
+  @ApiProperty()
+  lineIndex: number;
+
+  @ApiProperty()
+  audioStartMomentMs: number;
+}
+
 class PostResponseDto implements PostResponse {
   @ApiProperty({
     type: () => PostAuthorProfileResponseDto,
@@ -192,6 +201,9 @@ class PostResponseDto implements PostResponse {
 
   @ApiPropertyOptional({ nullable: true })
   originAuthorName: string | null;
+
+  @ApiProperty({ type: [PostTextSynchronizationItemResponseDto] })
+  textSynchronization: PostTextSynchronizationItemResponseDto[];
 
   @ApiProperty({ type: [CategoryResponseDto] })
   categories: CategoryResponseDto[];

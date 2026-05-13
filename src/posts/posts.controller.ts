@@ -36,6 +36,7 @@ import { GetPostCommentsQueryDto } from '../comments/dto/get-post-comments-query
 import { PostStatus } from '../common/enums/post-status.enum';
 import { GetCategoriesQueryDto } from './dto/get-categories-query.dto';
 import { GetMyPostsQueryDto } from './dto/get-my-posts-query.dto';
+import { UpdatePostTextSynchronizationDto } from './dto/update-post-text-synchronization.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import {
   CategoryResponse,
@@ -43,6 +44,7 @@ import {
   PostResponse,
   PaginatedPostsResponse,
   PostAuthorProfileResponse,
+  PostTextSynchronizationItemResponse,
 } from './posts.service';
 import { PostAudioProcessingQueueService } from './post-audio-processing-queue.service';
 import { UploadedPostAudio } from './post-audio-storage.service';
@@ -141,6 +143,14 @@ class PostAuthorProfileResponseDto implements PostAuthorProfileResponse {
   isPremium: boolean;
 }
 
+class PostTextSynchronizationItemResponseDto implements PostTextSynchronizationItemResponse {
+  @ApiProperty()
+  lineIndex: number;
+
+  @ApiProperty()
+  audioStartMomentMs: number;
+}
+
 class PostResponseDto implements PostResponse {
   @ApiProperty({
     type: () => PostAuthorProfileResponseDto,
@@ -179,6 +189,9 @@ class PostResponseDto implements PostResponse {
 
   @ApiPropertyOptional({ nullable: true })
   originAuthorName: string | null;
+
+  @ApiProperty({ type: [PostTextSynchronizationItemResponseDto] })
+  textSynchronization: PostTextSynchronizationItemResponseDto[];
 
   @ApiProperty({ type: [CategoryResponseDto] })
   categories: CategoryResponseDto[];
@@ -297,6 +310,19 @@ export class PostsController {
     @Body() dto: UpdatePostDto,
   ): Promise<PostResponseDto> {
     return this.postsService.updatePost(postId, req.user.userId, dto);
+  }
+
+  @Patch(':postId/text-synchronization')
+  async updatePostTextSynchronization(
+    @Req() req: RequestWithUser,
+    @Param('postId', ParseIntPipe) postId: number,
+    @Body() dto: UpdatePostTextSynchronizationDto,
+  ): Promise<PostResponseDto> {
+    return this.postsService.updatePostTextSynchronization(
+      postId,
+      req.user.userId,
+      dto.textSynchronization,
+    );
   }
 
   @Patch(':postId/audio')

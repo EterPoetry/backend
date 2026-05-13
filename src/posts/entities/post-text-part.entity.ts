@@ -1,4 +1,4 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { Post } from './post.entity';
 
 @Entity({ name: 'post_text_parts' })
@@ -14,6 +14,7 @@ export class PostTextPart {
   audioStartMomentMs: number;
 
   @ManyToOne(() => Post, (post) => post.textParts, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'post_id' })
   post: Post;
 
   @Column({ name: 'post_id', type: 'integer' })

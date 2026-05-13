@@ -63,7 +63,9 @@ async function bootstrap(): Promise<void> {
       .addBearerAuth()
       .build();
 
-    const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+    const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig, {
+      autoTagControllers: false,
+    });
     SwaggerModule.setup(swaggerPath, app, swaggerDocument, {
       swaggerOptions: {
         persistAuthorization: true,
