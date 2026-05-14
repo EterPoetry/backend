@@ -51,7 +51,7 @@ export class CommentsService {
 
   async getPostComments(
     postId: number,
-    requesterUserId: number,
+    requesterUserId: number | null,
     query: GetPostCommentsQueryDto,
   ): Promise<PaginatedCommentsResponse> {
     await this.requirePublishedPost(postId);
@@ -86,7 +86,7 @@ export class CommentsService {
 
   async getCommentReplies(
     commentId: number,
-    requesterUserId: number,
+    requesterUserId: number | null,
     query: GetPostCommentsQueryDto,
   ): Promise<PaginatedCommentsResponse> {
     const parentComment = await this.requireCommentOnPublishedPost(commentId);
@@ -231,7 +231,7 @@ export class CommentsService {
     return { ok: true };
   }
 
-  private createCommentsBaseQuery(postId: number, requesterUserId: number) {
+  private createCommentsBaseQuery(postId: number, requesterUserId: number | null) {
     return this.commentsRepository
       .createQueryBuilder('comment')
       .innerJoin('comment.commentAuthor', 'author')
@@ -263,7 +263,7 @@ export class CommentsService {
       }, 'likes_count');
   }
 
-  private createTopLevelCommentsQuery(postId: number, requesterUserId: number) {
+  private createTopLevelCommentsQuery(postId: number, requesterUserId: number | null) {
     return this.createCommentsBaseQuery(postId, requesterUserId).addSelect((subQuery) => {
       return subQuery
         .select('COUNT(reply.post_comment_id)')

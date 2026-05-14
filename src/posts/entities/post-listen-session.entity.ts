@@ -24,10 +24,16 @@ export class PostListenSession {
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
-  user: User;
+  user: User | null;
 
-  @Column({ name: 'user_id', type: 'integer' })
-  userId: number;
+  @Column({ name: 'user_id', type: 'integer', nullable: true })
+  userId: number | null;
+
+  @Column({ name: 'guest_session_id', type: 'varchar', length: 120, nullable: true })
+  guestSessionId: string | null;
+
+  @Column({ name: 'fingerprint_hash', type: 'varchar', length: 64, nullable: true })
+  fingerprintHash: string | null;
 
   @Column({ name: 'client_session_id', type: 'varchar', length: 120 })
   clientSessionId: string;

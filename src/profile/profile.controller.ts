@@ -25,6 +25,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { GetMyPostsQueryDto } from '../posts/dto/get-my-posts-query.dto';
 import {
   CategoryResponse,
@@ -51,7 +52,7 @@ import { ComplaintStatus } from '../common/enums/complaint-status.enum';
 const { memoryStorage } = require('multer');
 
 interface RequestWithUser extends Request {
-  user: { userId: number; email?: string };
+  user?: { userId: number; email?: string };
 }
 
 class ProfileResponseDto implements ProfileResponse {
@@ -311,46 +312,59 @@ class PaginatedProfileFollowListResponseDto implements PaginatedProfileFollowLis
 
 @Controller('profile')
 @ApiTags('Profile')
-@UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class ProfileController {
   constructor(private readonly profileService: ProfileService) {}
 
+  private requireUser(req: RequestWithUser): { userId: number; email?: string } {
+    if (!req.user) {
+      throw new BadRequestException('Authentication required.');
+    }
+
+    return req.user;
+  }
+
   @Get('me')
+  @UseGuards(JwtAuthGuard)
   async getMyProfile(@Req() req: RequestWithUser): Promise<ProfileResponseDto> {
-    return this.profileService.getMyProfile(req.user.userId);
+    return this.profileService.getMyProfile(this.requireUser(req).userId);
   }
 
   @Get('me/violations')
+  @UseGuards(JwtAuthGuard)
   async getMyActiveViolations(@Req() req: RequestWithUser): Promise<ActiveViolationResponseDto[]> {
-    return this.profileService.getMyActiveViolations(req.user.userId);
+    return this.profileService.getMyActiveViolations(this.requireUser(req).userId);
   }
 
   @Get('me/followers')
+  @UseGuards(JwtAuthGuard)
   async getMyFollowers(
     @Req() req: RequestWithUser,
     @Query() query: GetProfileFollowListQueryDto,
   ): Promise<PaginatedProfileFollowListResponseDto> {
-    return this.profileService.getMyFollowers(req.user.userId, query);
+    return this.profileService.getMyFollowers(this.requireUser(req).userId, query);
   }
 
   @Get('me/following')
+  @UseGuards(JwtAuthGuard)
   async getMyFollowing(
     @Req() req: RequestWithUser,
     @Query() query: GetProfileFollowListQueryDto,
   ): Promise<PaginatedProfileFollowListResponseDto> {
-    return this.profileService.getMyFollowing(req.user.userId, query);
+    return this.profileService.getMyFollowing(this.requireUser(req).userId, query);
   }
 
   @Patch('me')
+  @UseGuards(JwtAuthGuard)
   async updateMyProfile(
     @Req() req: RequestWithUser,
     @Body() dto: UpdateProfileDto,
   ): Promise<ProfileResponseDto> {
-    return this.profileService.updateMyProfile(req.user.userId, dto);
+    return this.profileService.updateMyProfile(this.requireUser(req).userId, dto);
   }
 
   @Patch('me/avatar')
+  @UseGuards(JwtAuthGuard)
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -380,26 +394,29 @@ export class ProfileController {
       throw new BadRequestException('Avatar file is required.');
     }
 
-    return this.profileService.updateMyAvatar(req.user.userId, avatar);
+    return this.profileService.updateMyAvatar(this.requireUser(req).userId, avatar);
   }
 
   @HttpPost(':userId/follow')
+  @UseGuards(JwtAuthGuard)
   async followUser(
     @Req() req: RequestWithUser,
     @Param('userId', ParseIntPipe) userId: number,
   ): Promise<PublicProfileResponseDto> {
-    return this.profileService.followUser(userId, req.user.userId);
+    return this.profileService.followUser(userId, this.requireUser(req).userId);
   }
 
   @Delete(':userId/follow')
+  @UseGuards(JwtAuthGuard)
   async unfollowUser(
     @Req() req: RequestWithUser,
     @Param('userId', ParseIntPipe) userId: number,
   ): Promise<PublicProfileResponseDto> {
-    return this.profileService.unfollowUser(userId, req.user.userId);
+    return this.profileService.unfollowUser(userId, this.requireUser(req).userId);
   }
 
   @Get(':userId/posts')
+  @UseGuards(OptionalJwtAuthGuard)
   async getProfilePublishedPosts(
     @Param('userId', ParseIntPipe) userId: number,
     @Query() query: GetMyPostsQueryDto,
@@ -408,10 +425,11 @@ export class ProfileController {
   }
 
   @Get(':userId')
+  @UseGuards(OptionalJwtAuthGuard)
   async getProfileById(
     @Req() req: RequestWithUser,
     @Param('userId', ParseIntPipe) userId: number,
   ): Promise<PublicProfileResponseDto> {
-    return this.profileService.getProfileById(userId, req.user.userId);
+    return this.profileService.getProfileById(userId, req.user?.userId ?? null);
   }
 }

@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { createHmac, timingSafeEqual } from 'crypto';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { PostAudioProcessingJobStatus } from '../common/enums/post-audio-processing-job-status.enum';
 import { Post } from './entities/post.entity';
@@ -98,15 +98,24 @@ export interface EndPostListenResponse extends UpdatePostListenProgressResponse 
   thresholdReached: boolean;
 }
 
+interface ListenRequestContext {
+  requesterUserId: number | null;
+  guestSessionId: string | null;
+  fingerprintHashSource: string | null;
+}
+
 interface ListenSessionTokenPayload {
   sessionId: number;
   postId: number;
-  userId: number;
+  userId: number | null;
+  guestSessionId: string | null;
   clientSessionId: string;
 }
 
 const LISTEN_COMPLETION_RATIO = 0.8;
 const LISTEN_COOLDOWN_HOURS = 12;
+const GUEST_FINGERPRINT_WINDOW_MINUTES = 30;
+const GUEST_FINGERPRINT_MAX_DISTINCT_SESSIONS = 10;
 const LISTEN_PROGRESS_MAX_SPEED_RATIO = 1.25;
 const LISTEN_PROGRESS_TIME_SKEW_MS = 1500;
 const LISTEN_POSITION_OVERSHOOT_MS = 3000;
@@ -188,8 +197,8 @@ export class PostsService {
       .getOne();
   }
 
-  async getPostDetails(postId: number, requesterUserId: number): Promise<PostResponse> {
-    const post = await this.requireOwnedPost(postId, requesterUserId);
+  async getPostDetails(postId: number, requesterUserId: number | null): Promise<PostResponse> {
+    const post = await this.requireReadablePost(postId, requesterUserId);
     return this.buildPostResponse(post);
   }
 
@@ -276,33 +285,37 @@ export class PostsService {
 
   async startPostListen(
     postId: number,
-    requesterUserId: number,
+    listener: ListenRequestContext,
     clientSessionId: string,
   ): Promise<StartPostListenResponse> {
-    const post = await this.getPostForListening(postId, requesterUserId);
+    const post = await this.getPostForListening(postId, listener.requesterUserId);
     const trackDurationMs = this.getTrackDurationMs(post.audioDurationSeconds);
+    const fingerprintHash = this.createFingerprintHash(listener.fingerprintHashSource);
     const existingSession = await this.postListenSessionsRepository.findOne({
-      where: {
-        postId,
-        userId: requesterUserId,
-        clientSessionId,
-      },
+      where: this.buildSessionLookupWhere(postId, listener, clientSessionId),
     });
 
     if (existingSession) {
+      const session =
+        existingSession.userId === null
+          ? await this.applyGuestFingerprintBurstCheck(existingSession, new Date())
+          : existingSession;
+
       return {
-        token: this.signListenSessionToken(existingSession),
-        listenedMs: existingSession.listenedMs,
-        trackDurationMs: existingSession.trackDurationMs,
-        isSuspicious: existingSession.isSuspicious,
+        token: this.signListenSessionToken(session),
+        listenedMs: session.listenedMs,
+        trackDurationMs: session.trackDurationMs,
+        isSuspicious: session.isSuspicious,
       };
     }
 
     const now = new Date();
-    const session = await this.postListenSessionsRepository.save(
+    let session = await this.postListenSessionsRepository.save(
       this.postListenSessionsRepository.create({
         postId: post.postId,
-        userId: requesterUserId,
+        userId: listener.requesterUserId,
+        guestSessionId: listener.requesterUserId === null ? listener.guestSessionId : null,
+        fingerprintHash,
         clientSessionId,
         trackDurationMs,
         listenedMs: 0,
@@ -316,6 +329,10 @@ export class PostsService {
       }),
     );
 
+    if (session.userId === null) {
+      session = await this.applyGuestFingerprintBurstCheck(session, now);
+    }
+
     return {
       token: this.signListenSessionToken(session),
       listenedMs: session.listenedMs,
@@ -326,12 +343,12 @@ export class PostsService {
 
   async updatePostListenProgress(
     postId: number,
-    requesterUserId: number,
+    listener: ListenRequestContext,
     token: string,
     positionMs: number,
   ): Promise<UpdatePostListenProgressResponse> {
     const tokenPayload = this.verifyListenSessionToken(token);
-    const session = await this.getListenSessionForUpdate(postId, requesterUserId, tokenPayload);
+    const session = await this.getListenSessionForUpdate(postId, listener, tokenPayload);
 
     const updatedSession = await this.applyListenProgress(
       session,
@@ -348,7 +365,7 @@ export class PostsService {
 
   async endPostListen(
     postId: number,
-    requesterUserId: number,
+    listener: ListenRequestContext,
     token: string,
     positionMs: number,
     clientSessionId?: string,
@@ -358,7 +375,7 @@ export class PostsService {
       throw new BadRequestException('Session id does not match the listen token.');
     }
 
-    const session = await this.getListenSessionForUpdate(postId, requesterUserId, tokenPayload);
+    const session = await this.getListenSessionForUpdate(postId, listener, tokenPayload);
     const now = new Date();
     const updatedSession = await this.applyListenProgress(
       session,
@@ -400,29 +417,30 @@ export class PostsService {
       if (
         thresholdReached &&
         !lockedSession.isSuspicious &&
-        post.authorId !== lockedSession.userId &&
+        (lockedSession.userId === null || post.authorId !== lockedSession.userId) &&
         post.status === PostStatus.PUBLISHED
       ) {
-        await manager.query(`SELECT pg_advisory_xact_lock($1, $2)`, [
-          lockedSession.userId,
-          lockedSession.postId,
-        ]);
+        await this.acquireListenCooldownLock(manager, lockedSession);
 
         const cooldownBoundary = this.getListenCooldownBoundary(now);
-        const recentCount = await sessionsRepository
-          .createQueryBuilder('session')
-          .where('session.post_id = :postId', { postId: lockedSession.postId })
-          .andWhere('session.user_id = :userId', { userId: lockedSession.userId })
-          .andWhere('session.listen_counted_at IS NOT NULL')
-          .andWhere('session.listen_counted_at > :cooldownBoundary', { cooldownBoundary })
-          .andWhere('session.post_listen_session_id != :sessionId', {
-            sessionId: lockedSession.postListenSessionId,
-          })
-          .getCount();
+        const cooldownExists = await this.hasRecentCountedListen(
+          sessionsRepository,
+          lockedSession,
+          cooldownBoundary,
+        );
+        const fingerprintAlreadyCounted = await this.hasCountedAnonymousFingerprint(
+          sessionsRepository,
+          lockedSession,
+        );
 
-        if (recentCount === 0) {
+        if (!cooldownExists && !fingerprintAlreadyCounted) {
           countedAt = now;
           await postsRepository.increment({ postId: lockedSession.postId }, 'listens', 1);
+        } else if (fingerprintAlreadyCounted) {
+          await sessionsRepository.update(lockedSession.postListenSessionId, {
+            isSuspicious: true,
+            suspiciousReason: 'fingerprint_already_counted',
+          });
         }
       }
 
@@ -795,6 +813,20 @@ export class PostsService {
     return post;
   }
 
+  private async requireReadablePost(postId: number, requesterUserId: number | null): Promise<Post> {
+    const post = await this.getPostById(postId);
+
+    if (!post) {
+      throw new NotFoundException('Post not found.');
+    }
+
+    if (post.status === PostStatus.PUBLISHED || post.authorId === requesterUserId) {
+      return post;
+    }
+
+    throw new ForbiddenException('You do not have access to this post.');
+  }
+
   private async syncPostCategories(
     manager: EntityManager,
     postId: number,
@@ -1016,7 +1048,7 @@ export class PostsService {
     }
   }
 
-  private async getPostForListening(postId: number, requesterUserId: number): Promise<Post> {
+  private async getPostForListening(postId: number, requesterUserId: number | null): Promise<Post> {
     const post = await this.postsRepository.findOne({
       where: { postId },
       select: {
@@ -1044,6 +1076,7 @@ export class PostsService {
         sessionId: session.postListenSessionId,
         postId: session.postId,
         userId: session.userId,
+        guestSessionId: session.guestSessionId,
         clientSessionId: session.clientSessionId,
       } satisfies ListenSessionTokenPayload),
     ).toString('base64url');
@@ -1081,7 +1114,8 @@ export class PostsService {
       parsedPayload === null ||
       !Number.isInteger((parsedPayload as { sessionId?: unknown }).sessionId) ||
       !Number.isInteger((parsedPayload as { postId?: unknown }).postId) ||
-      !Number.isInteger((parsedPayload as { userId?: unknown }).userId) ||
+      !this.isNullableInteger((parsedPayload as { userId?: unknown }).userId) ||
+      !this.isNullableString((parsedPayload as { guestSessionId?: unknown }).guestSessionId) ||
       typeof (parsedPayload as { clientSessionId?: unknown }).clientSessionId !== 'string'
     ) {
       throw new BadRequestException('Listen token is invalid.');
@@ -1103,19 +1137,33 @@ export class PostsService {
 
   private async getListenSessionForUpdate(
     postId: number,
-    requesterUserId: number,
+    listener: ListenRequestContext,
     tokenPayload: ListenSessionTokenPayload,
   ): Promise<PostListenSession> {
-    if (tokenPayload.postId !== postId || tokenPayload.userId !== requesterUserId) {
+    const isAuthenticatedRequest = listener.requesterUserId !== null;
+
+    if (
+      tokenPayload.postId !== postId ||
+      tokenPayload.userId !== listener.requesterUserId ||
+      (!isAuthenticatedRequest && tokenPayload.guestSessionId !== listener.guestSessionId)
+    ) {
       throw new BadRequestException('Listen token does not match the request.');
     }
 
     const session = await this.postListenSessionsRepository.findOne({
-      where: {
-        postListenSessionId: tokenPayload.sessionId,
-        postId,
-        userId: requesterUserId,
-      },
+      where:
+        listener.requesterUserId !== null
+          ? {
+              postListenSessionId: tokenPayload.sessionId,
+              postId,
+              userId: listener.requesterUserId,
+            }
+          : {
+              postListenSessionId: tokenPayload.sessionId,
+              postId,
+              userId: IsNull(),
+              guestSessionId: this.requireGuestSessionId(listener.guestSessionId),
+            },
     });
 
     if (!session) {
@@ -1209,5 +1257,146 @@ export class PostsService {
 
   private getListenCooldownBoundary(now: Date): Date {
     return new Date(now.getTime() - LISTEN_COOLDOWN_HOURS * 60 * 60 * 1000);
+  }
+
+  private createFingerprintHash(value: string | null): string | null {
+    if (!value) {
+      return null;
+    }
+
+    return createHash('sha256').update(value).digest('hex');
+  }
+
+  private buildSessionLookupWhere(
+    postId: number,
+    listener: ListenRequestContext,
+    clientSessionId: string,
+  ) {
+    return listener.requesterUserId !== null
+      ? {
+          postId,
+          userId: listener.requesterUserId,
+          clientSessionId,
+        }
+      : {
+          postId,
+          userId: IsNull(),
+          guestSessionId: this.requireGuestSessionId(listener.guestSessionId),
+          clientSessionId,
+        };
+  }
+
+  private requireGuestSessionId(guestSessionId: string | null): string {
+    if (!guestSessionId) {
+      throw new BadRequestException('Guest session is required.');
+    }
+
+    return guestSessionId;
+  }
+
+  private async applyGuestFingerprintBurstCheck(
+    session: PostListenSession,
+    now: Date,
+  ): Promise<PostListenSession> {
+    if (
+      session.userId !== null ||
+      session.isSuspicious ||
+      !session.fingerprintHash ||
+      !session.guestSessionId
+    ) {
+      return session;
+    }
+
+    const boundary = new Date(now.getTime() - GUEST_FINGERPRINT_WINDOW_MINUTES * 60 * 1000);
+    const rawResult = await this.postListenSessionsRepository
+      .createQueryBuilder('session')
+      .select('COUNT(DISTINCT session.guest_session_id)', 'count')
+      .where('session.user_id IS NULL')
+      .andWhere('session.fingerprint_hash = :fingerprintHash', {
+        fingerprintHash: session.fingerprintHash,
+      })
+      .andWhere('session.created_at > :boundary', { boundary })
+      .getRawOne<{ count: string }>();
+
+    const distinctGuestSessions = Number(rawResult?.count ?? 0);
+    if (distinctGuestSessions < GUEST_FINGERPRINT_MAX_DISTINCT_SESSIONS) {
+      return session;
+    }
+
+    return this.markListenSessionSuspicious(session, 'guest_fingerprint_too_many_sessions', now);
+  }
+
+  private async acquireListenCooldownLock(
+    manager: EntityManager,
+    session: PostListenSession,
+  ): Promise<void> {
+    if (session.userId !== null) {
+      await manager.query(`SELECT pg_advisory_xact_lock($1, $2)`, [session.userId, session.postId]);
+      return;
+    }
+
+    await manager.query(`SELECT pg_advisory_xact_lock(hashtext($1), $2)`, [
+      session.guestSessionId,
+      session.postId,
+    ]);
+  }
+
+  private async hasRecentCountedListen(
+    sessionsRepository: Repository<PostListenSession>,
+    session: PostListenSession,
+    cooldownBoundary: Date,
+  ): Promise<boolean> {
+    const queryBuilder = sessionsRepository
+      .createQueryBuilder('session')
+      .where('session.post_id = :postId', { postId: session.postId })
+      .andWhere('session.listen_counted_at IS NOT NULL')
+      .andWhere('session.listen_counted_at > :cooldownBoundary', { cooldownBoundary })
+      .andWhere('session.post_listen_session_id != :sessionId', {
+        sessionId: session.postListenSessionId,
+      });
+
+    if (session.userId !== null) {
+      queryBuilder.andWhere('session.user_id = :userId', { userId: session.userId });
+    } else {
+      queryBuilder
+        .andWhere('session.user_id IS NULL')
+        .andWhere('session.guest_session_id = :guestSessionId', {
+          guestSessionId: session.guestSessionId,
+        });
+    }
+
+    return (await queryBuilder.getCount()) > 0;
+  }
+
+  private async hasCountedAnonymousFingerprint(
+    sessionsRepository: Repository<PostListenSession>,
+    session: PostListenSession,
+  ): Promise<boolean> {
+    if (session.userId !== null || !session.fingerprintHash) {
+      return false;
+    }
+
+    const count = await sessionsRepository
+      .createQueryBuilder('session')
+      .where('session.post_id = :postId', { postId: session.postId })
+      .andWhere('session.user_id IS NULL')
+      .andWhere('session.fingerprint_hash = :fingerprintHash', {
+        fingerprintHash: session.fingerprintHash,
+      })
+      .andWhere('session.listen_counted_at IS NOT NULL')
+      .andWhere('session.post_listen_session_id != :sessionId', {
+        sessionId: session.postListenSessionId,
+      })
+      .getCount();
+
+    return count > 0;
+  }
+
+  private isNullableInteger(value: unknown): value is number | null {
+    return value === null || Number.isInteger(value);
+  }
+
+  private isNullableString(value: unknown): value is string | null {
+    return value === null || typeof value === 'string';
   }
 }

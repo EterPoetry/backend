@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -10,6 +11,7 @@ import {
   Post as HttpPost,
   Query,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -23,8 +25,10 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Request } from 'express';
+import { randomUUID } from 'crypto';
+import { type CookieOptions, Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import {
   CommentAuthorResponse,
   CommentResponse,
@@ -57,9 +61,11 @@ import { PostAudioProcessingQueueService } from './post-audio-processing-queue.s
 import { UploadedPostAudio } from './post-audio-storage.service';
 
 const { memoryStorage } = require('multer');
+const GUEST_SESSION_COOKIE_NAME = 'guestSessionId';
+const GUEST_SESSION_COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 
 interface RequestWithUser extends Request {
-  user: { userId: number; email?: string };
+  user?: { userId: number; email?: string };
 }
 
 class CategoryResponseDto implements CategoryResponse {
@@ -268,7 +274,6 @@ class EndPostListenResponseDto
 
 @Controller('posts')
 @ApiTags('Posts')
-@UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class PostsController {
   constructor(
@@ -277,20 +282,141 @@ export class PostsController {
     private readonly postAudioProcessingQueueService: PostAudioProcessingQueueService,
   ) {}
 
+  private requireUser(req: RequestWithUser): { userId: number; email?: string } {
+    if (!req.user) {
+      throw new ForbiddenException('Authentication required.');
+    }
+
+    return req.user;
+  }
+
+  private buildListenRequestContext(
+    req: RequestWithUser,
+    guestSessionId: string | null,
+  ): {
+    requesterUserId: number | null;
+    guestSessionId: string | null;
+    fingerprintHashSource: string | null;
+  } {
+    return {
+      requesterUserId: req.user?.userId ?? null,
+      guestSessionId,
+      fingerprintHashSource: this.getFingerprintHashSource(req),
+    };
+  }
+
+  private getFingerprintHashSource(req: Request): string | null {
+    const clientIp = this.getClientIp(req);
+    const userAgent = req.get('user-agent')?.trim() || null;
+    const acceptLanguage = req.get('accept-language')?.trim() || null;
+    const fingerprintParts = [clientIp, userAgent, acceptLanguage].filter(
+      (value): value is string => Boolean(value),
+    );
+
+    return fingerprintParts.length ? fingerprintParts.join('|') : null;
+  }
+
+  private getClientIp(req: Request): string | null {
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const forwardedIp = Array.isArray(forwardedFor)
+      ? forwardedFor[0]
+      : forwardedFor?.split(',')[0];
+    const clientIp = forwardedIp?.trim() || req.ip || req.socket.remoteAddress;
+    return clientIp ? clientIp.slice(0, 64) : null;
+  }
+
+  private ensureGuestSessionId(req: Request, res: Response): string {
+    const existingGuestSessionId = this.getGuestSessionId(req);
+    if (existingGuestSessionId) {
+      return existingGuestSessionId;
+    }
+
+    const guestSessionId = randomUUID();
+    res.cookie(GUEST_SESSION_COOKIE_NAME, guestSessionId, {
+      ...this.getGuestSessionCookieBaseOptions(),
+      maxAge: GUEST_SESSION_COOKIE_MAX_AGE_MS,
+    });
+    return guestSessionId;
+  }
+
+  private getGuestSessionId(req: Request): string | null {
+    const guestSessionId = req.cookies?.[GUEST_SESSION_COOKIE_NAME];
+
+    if (typeof guestSessionId !== 'string' || !guestSessionId.trim()) {
+      return null;
+    }
+
+    return guestSessionId.trim().slice(0, 120);
+  }
+
+  private getGuestSessionCookieBaseOptions(): CookieOptions {
+    const secure =
+      this.getBooleanEnv('GUEST_SESSION_COOKIE_SECURE') ?? process.env.NODE_ENV === 'production';
+    const sameSite = this.getCookieSameSite('GUEST_SESSION_COOKIE_SAME_SITE', secure);
+    const domain = process.env.GUEST_SESSION_COOKIE_DOMAIN?.trim();
+
+    return {
+      httpOnly: true,
+      secure,
+      sameSite,
+      ...(domain ? { domain } : {}),
+      path: '/',
+    };
+  }
+
+  private getCookieSameSite(name: string, secure: boolean): CookieOptions['sameSite'] {
+    const configuredValue = process.env[name]?.trim().toLowerCase();
+
+    if (!configuredValue) {
+      return secure ? 'none' : 'lax';
+    }
+
+    if (
+      configuredValue === 'lax' ||
+      configuredValue === 'strict' ||
+      configuredValue === 'none'
+    ) {
+      return configuredValue;
+    }
+
+    throw new ForbiddenException(`${name} must be one of: lax, strict, none.`);
+  }
+
+  private getBooleanEnv(name: string): boolean | null {
+    const value = process.env[name]?.trim().toLowerCase();
+
+    if (!value) {
+      return null;
+    }
+
+    if (value === 'true' || value === '1' || value === 'yes') {
+      return true;
+    }
+
+    if (value === 'false' || value === '0' || value === 'no') {
+      return false;
+    }
+
+    throw new ForbiddenException(`${name} must be a boolean value.`);
+  }
+
   @Get('me')
+  @UseGuards(JwtAuthGuard)
   async getMyPosts(
     @Req() req: RequestWithUser,
     @Query() query: GetMyPostsQueryDto,
   ): Promise<PaginatedPostsResponseDto> {
-    return this.postsService.getMyPosts(req.user.userId, query);
+    return this.postsService.getMyPosts(this.requireUser(req).userId, query);
   }
 
   @Get('categories')
+  @UseGuards(OptionalJwtAuthGuard)
   async getCategories(@Query() query: GetCategoriesQueryDto): Promise<CategoryResponseDto[]> {
     return this.postsService.getCategories(query);
   }
 
   @Get('popular')
+  @UseGuards(OptionalJwtAuthGuard)
   async getPopularPosts(
     @Query() query: GetPopularPostsQueryDto,
   ): Promise<PaginatedPostsResponseDto> {
@@ -298,32 +424,42 @@ export class PostsController {
   }
 
   @Get(':postId')
+  @UseGuards(OptionalJwtAuthGuard)
   async getPostDetails(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
   ): Promise<PostResponseDto> {
-    return this.postsService.getPostDetails(postId, req.user.userId);
+    return this.postsService.getPostDetails(postId, req.user?.userId ?? null);
   }
 
   @Get(':postId/comments')
+  @UseGuards(OptionalJwtAuthGuard)
   async getPostComments(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
     @Query() query: GetPostCommentsQueryDto,
   ): Promise<PaginatedCommentsResponseDto> {
-    return this.commentsService.getPostComments(postId, req.user.userId, query);
+    return this.commentsService.getPostComments(postId, req.user?.userId ?? null, query);
   }
 
   @HttpPost(':postId/listen/start')
+  @UseGuards(OptionalJwtAuthGuard)
   async startPostListen(
     @Req() req: RequestWithUser,
+    @Res({ passthrough: true }) res: Response,
     @Param('postId', ParseIntPipe) postId: number,
     @Body() dto: StartPostListenDto,
   ): Promise<StartPostListenResponseDto> {
-    return this.postsService.startPostListen(postId, req.user.userId, dto.sessionId);
+    const guestSessionId = req.user ? this.getGuestSessionId(req) : this.ensureGuestSessionId(req, res);
+    return this.postsService.startPostListen(
+      postId,
+      this.buildListenRequestContext(req, guestSessionId),
+      dto.sessionId,
+    );
   }
 
   @HttpPost(':postId/listen/progress')
+  @UseGuards(OptionalJwtAuthGuard)
   async updatePostListenProgress(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
@@ -331,13 +467,14 @@ export class PostsController {
   ): Promise<UpdatePostListenProgressResponseDto> {
     return this.postsService.updatePostListenProgress(
       postId,
-      req.user.userId,
+      this.buildListenRequestContext(req, this.getGuestSessionId(req)),
       dto.token,
       dto.positionMs,
     );
   }
 
   @HttpPost(':postId/listen/end')
+  @UseGuards(OptionalJwtAuthGuard)
   async endPostListen(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
@@ -345,7 +482,7 @@ export class PostsController {
   ): Promise<EndPostListenResponseDto> {
     return this.postsService.endPostListen(
       postId,
-      req.user.userId,
+      this.buildListenRequestContext(req, this.getGuestSessionId(req)),
       dto.token,
       dto.positionMs,
       dto.sessionId,
@@ -353,57 +490,64 @@ export class PostsController {
   }
 
   @Get('comments/:commentId/replies')
+  @UseGuards(OptionalJwtAuthGuard)
   async getCommentReplies(
     @Req() req: RequestWithUser,
     @Param('commentId', ParseIntPipe) commentId: number,
     @Query() query: GetPostCommentsQueryDto,
   ): Promise<PaginatedCommentsResponseDto> {
-    return this.commentsService.getCommentReplies(commentId, req.user.userId, query);
+    return this.commentsService.getCommentReplies(commentId, req.user?.userId ?? null, query);
   }
 
   @HttpPost(':postId/comments')
+  @UseGuards(JwtAuthGuard)
   async createComment(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
     @Body() dto: CreateCommentDto,
   ): Promise<CommentResponseDto> {
-    return this.commentsService.createComment(postId, req.user.userId, dto);
+    return this.commentsService.createComment(postId, this.requireUser(req).userId, dto);
   }
 
   @HttpPost('comments/:commentId/like')
+  @UseGuards(JwtAuthGuard)
   async likeComment(
     @Req() req: RequestWithUser,
     @Param('commentId', ParseIntPipe) commentId: number,
   ): Promise<{ ok: true }> {
-    return this.commentsService.likeComment(commentId, req.user.userId);
+    return this.commentsService.likeComment(commentId, this.requireUser(req).userId);
   }
 
   @Delete('comments/:commentId/like')
+  @UseGuards(JwtAuthGuard)
   async unlikeComment(
     @Req() req: RequestWithUser,
     @Param('commentId', ParseIntPipe) commentId: number,
   ): Promise<{ ok: true }> {
-    return this.commentsService.unlikeComment(commentId, req.user.userId);
+    return this.commentsService.unlikeComment(commentId, this.requireUser(req).userId);
   }
 
   @Delete('comments/:commentId')
+  @UseGuards(JwtAuthGuard)
   async deleteComment(
     @Req() req: RequestWithUser,
     @Param('commentId', ParseIntPipe) commentId: number,
   ): Promise<{ ok: true }> {
-    return this.commentsService.deleteComment(commentId, req.user.userId);
+    return this.commentsService.deleteComment(commentId, this.requireUser(req).userId);
   }
 
   @Patch(':postId')
+  @UseGuards(JwtAuthGuard)
   async updatePost(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
     @Body() dto: UpdatePostDto,
   ): Promise<PostResponseDto> {
-    return this.postsService.updatePost(postId, req.user.userId, dto);
+    return this.postsService.updatePost(postId, this.requireUser(req).userId, dto);
   }
 
   @Patch(':postId/text-synchronization')
+  @UseGuards(JwtAuthGuard)
   async updatePostTextSynchronization(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
@@ -411,12 +555,13 @@ export class PostsController {
   ): Promise<PostResponseDto> {
     return this.postsService.updatePostTextSynchronization(
       postId,
-      req.user.userId,
+      this.requireUser(req).userId,
       dto.textSynchronization,
     );
   }
 
   @Patch(':postId/audio')
+  @UseGuards(JwtAuthGuard)
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -447,21 +592,27 @@ export class PostsController {
       throw new BadRequestException('Audio file is required.');
     }
 
-    const post = await this.postsService.replacePostAudio(postId, req.user.userId, audio);
+    const post = await this.postsService.replacePostAudio(
+      postId,
+      this.requireUser(req).userId,
+      audio,
+    );
     void this.postAudioProcessingQueueService.enqueueExistingPendingJobs();
     return post;
   }
 
   @Delete(':postId')
+  @UseGuards(JwtAuthGuard)
   async deletePost(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
   ): Promise<{ ok: true }> {
-    await this.postsService.deletePost(postId, req.user.userId);
+    await this.postsService.deletePost(postId, this.requireUser(req).userId);
     return { ok: true };
   }
 
   @HttpPost()
+  @UseGuards(JwtAuthGuard)
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -491,7 +642,7 @@ export class PostsController {
       throw new BadRequestException('Audio file is required.');
     }
 
-    const post = await this.postsService.createEmptyPost(req.user.userId, audio);
+    const post = await this.postsService.createEmptyPost(this.requireUser(req).userId, audio);
     void this.postAudioProcessingQueueService.enqueueExistingPendingJobs();
     return post;
   }
