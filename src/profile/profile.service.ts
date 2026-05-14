@@ -112,7 +112,10 @@ export class ProfileService {
     return this.buildProfileResponse(user);
   }
 
-  async getProfileById(profileUserId: number, requesterUserId: number): Promise<PublicProfileResponse> {
+  async getProfileById(
+    profileUserId: number,
+    requesterUserId: number | null,
+  ): Promise<PublicProfileResponse> {
     const user = await this.usersRepository.findOne({
       where: { userId: profileUserId },
       relations: { subscription: true },
@@ -328,18 +331,20 @@ export class ProfileService {
 
   private async buildPublicProfileResponse(
     user: User,
-    requesterUserId: number,
+    requesterUserId: number | null,
   ): Promise<PublicProfileResponse> {
     const [followersCount, followingCount, postsCount, isSubscribed] = await Promise.all([
       this.followersRepository.countBy({ targetUserId: user.userId }),
       this.followersRepository.countBy({ followerUserId: user.userId }),
       this.postsRepository.countBy({ authorId: user.userId }),
-      this.followersRepository.exist({
-        where: {
-          followerUserId: requesterUserId,
-          targetUserId: user.userId,
-        },
-      }),
+      requesterUserId === null
+        ? Promise.resolve(false)
+        : this.followersRepository.exist({
+            where: {
+              followerUserId: requesterUserId,
+              targetUserId: user.userId,
+            },
+          }),
     ]);
 
     return {
