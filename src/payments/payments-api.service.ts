@@ -3,7 +3,18 @@ import { ConfigService } from '@nestjs/config';
 
 interface ProviderInvoiceResponse {
   invoiceId: string;
-  checkoutUrl: string;
+  checkoutUrl: string | null;
+  status?: string;
+  modifiedDate?: string;
+}
+
+interface ProviderInvoiceCreateResponseRaw {
+  invoiceId?: string;
+  checkoutUrl?: string;
+  url?: string;
+  pageUrl?: string;
+  paymentUrl?: string;
+  redirectUrl?: string;
   status?: string;
   modifiedDate?: string;
 }
@@ -33,7 +44,12 @@ export class PaymentsApiService {
   constructor(private readonly configService: ConfigService) {}
 
   async createCheckoutInvoice(payload: Record<string, unknown>): Promise<ProviderInvoiceResponse> {
-    return this.post<ProviderInvoiceResponse>('/api/merchant/invoice/create', payload);
+    const response = await this.post<ProviderInvoiceCreateResponseRaw>(
+      '/api/merchant/invoice/create',
+      payload,
+    );
+
+    return this.normalizeInvoiceCreateResponse(response);
   }
 
   async fetchPublicKey(): Promise<string> {
@@ -63,7 +79,12 @@ export class PaymentsApiService {
   }
 
   async createWalletPayment(payload: Record<string, unknown>): Promise<ProviderInvoiceResponse> {
-    return this.post<ProviderInvoiceResponse>('/api/merchant/wallet/payment', payload);
+    const response = await this.post<ProviderInvoiceCreateResponseRaw>(
+      '/api/merchant/wallet/payment',
+      payload,
+    );
+
+    return this.normalizeInvoiceCreateResponse(response);
   }
 
   async deleteCard(cardToken: string): Promise<void> {
@@ -130,5 +151,33 @@ export class PaymentsApiService {
     }
 
     return (await response.json()) as T;
+  }
+
+  private normalizeInvoiceCreateResponse(
+    response: ProviderInvoiceCreateResponseRaw,
+  ): ProviderInvoiceResponse {
+    const invoiceId = response.invoiceId?.trim();
+    if (!invoiceId) {
+      throw new ServiceUnavailableException('Payments API did not return invoiceId.');
+    }
+
+    const checkoutUrl =
+      response.checkoutUrl?.trim() ||
+      response.url?.trim() ||
+      response.pageUrl?.trim() ||
+      response.paymentUrl?.trim() ||
+      response.redirectUrl?.trim() ||
+      null;
+
+    if (!checkoutUrl) {
+      this.logger.warn(`Payments API returned invoiceId ${invoiceId} without checkout URL.`);
+    }
+
+    return {
+      invoiceId,
+      checkoutUrl,
+      status: response.status,
+      modifiedDate: response.modifiedDate,
+    };
   }
 }

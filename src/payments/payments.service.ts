@@ -91,7 +91,9 @@ export class PaymentsService implements OnModuleInit {
     await this.restoreIncompleteTransactions();
   }
 
-  async checkoutSubscription(userId: number): Promise<{ invoiceId: string; checkoutUrl: string }> {
+  async checkoutSubscription(
+    userId: number,
+  ): Promise<{ invoiceId: string; checkoutUrl: string | null }> {
     const subscription = await this.getOrCreateSubscription(userId);
     if (subscription.status === SubscriptionStatus.ACTIVE) {
       throw new ConflictException('Subscription is already active.');
@@ -211,7 +213,7 @@ export class PaymentsService implements OnModuleInit {
 
   async updateSubscriptionCard(
     userId: number,
-  ): Promise<{ invoiceId: string; checkoutUrl: string }> {
+  ): Promise<{ invoiceId: string; checkoutUrl: string | null }> {
     const subscription = await this.subscriptionsRepository.findOne({
       where: { userId },
       relations: { card: true },
