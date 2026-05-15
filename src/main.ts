@@ -10,6 +10,9 @@ interface RawBodyRequest extends express.Request {
   rawBody?: Buffer | string;
 }
 
+type WebhookResponse = express.Response;
+type WebhookNext = express.NextFunction;
+
 function formatWebhookBody(req: RawBodyRequest): string {
   if (typeof req.rawBody === 'string') {
     return req.rawBody;
@@ -39,7 +42,7 @@ async function bootstrap(): Promise<void> {
   const storageDriver = (process.env.FILE_STORAGE_DRIVER ?? 'local').toLowerCase();
 
   app.use(cookieParser());
-  app.use('/payments/webhook', (req: RawBodyRequest, res, next) => {
+  app.use('/payments/webhook', (req: RawBodyRequest, res: WebhookResponse, next: WebhookNext) => {
     const body = formatWebhookBody(req);
     const signatureHeader = req.header('x-sign') ?? 'missing';
 
