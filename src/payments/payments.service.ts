@@ -830,6 +830,11 @@ export class PaymentsService implements OnModuleInit {
     paymentSystem?: string,
     maskedPan?: string,
   ): Promise<void> {
+    const cardsRepository = manager.getRepository(Card);
+    const existingCardByToken = await cardsRepository.findOne({
+      where: { token: cardToken },
+    });
+
     if (subscription.card?.token && subscription.card.token !== cardToken) {
       try {
         await this.paymentsApiService.deleteCard(subscription.card.token);
@@ -840,12 +845,30 @@ export class PaymentsService implements OnModuleInit {
       }
     }
 
-    if (subscription.card) {
-      await manager.getRepository(Card).delete({ cardId: subscription.card.cardId });
+    if (existingCardByToken && existingCardByToken.subscriptionId !== subscription.subscriptionId) {
+      this.logger.log(
+        `Reassigning existing card token ${this.maskToken(cardToken)} from subscriptionId=${existingCardByToken.subscriptionId} to subscriptionId=${subscription.subscriptionId}`,
+      );
+      await cardsRepository.delete({ cardId: existingCardByToken.cardId });
     }
 
-    await manager.getRepository(Card).save(
-      manager.getRepository(Card).create({
+    if (
+      subscription.card &&
+      (!existingCardByToken || subscription.card.cardId !== existingCardByToken.cardId)
+    ) {
+      await cardsRepository.delete({ cardId: subscription.card.cardId });
+    }
+
+    if (existingCardByToken && existingCardByToken.subscriptionId === subscription.subscriptionId) {
+      await cardsRepository.update(existingCardByToken.cardId, {
+        paymentSystem: paymentSystem?.trim() || existingCardByToken.paymentSystem,
+        maskedNumber: maskedPan?.trim() || existingCardByToken.maskedNumber,
+      });
+      return;
+    }
+
+    await cardsRepository.save(
+      cardsRepository.create({
         subscriptionId: subscription.subscriptionId,
         token: cardToken,
         paymentSystem: paymentSystem?.trim() || 'unknown',
