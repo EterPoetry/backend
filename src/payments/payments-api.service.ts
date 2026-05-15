@@ -23,7 +23,7 @@ interface ProviderInvoiceStatusResponse {
   invoiceId: string;
   status: string;
   amount?: number;
-  ccy?: string;
+  ccy?: string | number;
   createdDate?: string;
   modifiedDate?: string;
   walletData?: {

@@ -71,10 +71,21 @@ export interface PaginatedTransactionsResponse {
   offset: number;
 }
 
+interface NormalizedInvoiceStatus {
+  invoiceId: string;
+  status: string;
+  amountMinor: number | null;
+  currencyCode: string | null;
+  createdDate?: string;
+  modifiedDate: string;
+  walletData?: InvoiceStatusDto['walletData'];
+  paymentInfo?: InvoiceStatusDto['paymentInfo'];
+}
+
 @Injectable()
 export class PaymentsService implements OnModuleInit {
   private readonly logger = new Logger(PaymentsService.name);
-  private readonly pendingWebhooks = new Map<string, InvoiceStatusDto>();
+  private readonly pendingWebhooks = new Map<string, NormalizedInvoiceStatus>();
   private cachedPublicKey: string | null = null;
   private publicKeyFetchedAt = 0;
 
@@ -279,7 +290,7 @@ export class PaymentsService implements OnModuleInit {
       }
     }
 
-    const normalizedInvoice = this.normalizeInvoiceStatusDto(dto);
+    const normalizedInvoice = this.normalizeInvoiceStatus(dto);
     const transaction = await this.transactionsRepository.findOne({
       where: [
         {
@@ -306,7 +317,7 @@ export class PaymentsService implements OnModuleInit {
 
   async processInvoiceStatus(
     transaction: Transaction,
-    dto: InvoiceStatusDto,
+    dto: NormalizedInvoiceStatus,
   ): Promise<void> {
     const webhookModifiedDate = new Date(dto.modifiedDate);
     if (transaction.modifiedDate && transaction.modifiedDate > webhookModifiedDate) {
@@ -390,14 +401,14 @@ export class PaymentsService implements OnModuleInit {
         status: normalizedStatus,
         modifiedDate: webhookModifiedDate,
         amount:
-          dto.amount !== undefined && Number.isFinite(dto.amount)
-            ? dto.amount.toFixed(2)
+          dto.amountMinor !== null
+            ? this.formatMinorAmount(dto.amountMinor)
             : lockedTransaction.amount,
         sum:
-          dto.amount !== undefined && Number.isFinite(dto.amount)
-            ? dto.amount.toFixed(2)
+          dto.amountMinor !== null
+            ? this.formatMinorAmount(dto.amountMinor)
             : lockedTransaction.sum,
-        currency: dto.ccy?.trim() || lockedTransaction.currency,
+        currency: dto.currencyCode || lockedTransaction.currency,
       });
 
       if (lockedTransaction.isCardUpdating && normalizedStatus === TransactionStatus.HOLD) {
@@ -456,7 +467,7 @@ export class PaymentsService implements OnModuleInit {
 
   async recoverTransactionStatus(transaction: Transaction): Promise<void> {
     const providerStatus = await this.paymentsApiService.fetchInvoiceStatus(transaction.invoiceId);
-    await this.processInvoiceStatus(transaction, this.normalizeInvoiceStatusDto(providerStatus));
+    await this.processInvoiceStatus(transaction, this.normalizeInvoiceStatus(providerStatus));
   }
 
   async runBillingCycle(): Promise<void> {
@@ -669,7 +680,7 @@ export class PaymentsService implements OnModuleInit {
     return publicKey;
   }
 
-  private normalizeInvoiceStatusDto(dto: Partial<InvoiceStatusDto>): InvoiceStatusDto {
+  private normalizeInvoiceStatus(dto: Partial<InvoiceStatusDto>): NormalizedInvoiceStatus {
     if (!dto.invoiceId || !dto.status) {
       throw new BadRequestException('Webhook payload is incomplete.');
     }
@@ -682,8 +693,12 @@ export class PaymentsService implements OnModuleInit {
     return {
       invoiceId: dto.invoiceId,
       status: dto.status,
-      amount: dto.amount,
-      ccy: dto.ccy,
+      amountMinor:
+        typeof dto.amount === 'number' && Number.isFinite(dto.amount)
+          ? dto.amount
+          : null,
+      currencyCode:
+        dto.ccy === undefined || dto.ccy === null ? null : String(dto.ccy).trim() || null,
       createdDate: dto.createdDate,
       modifiedDate: modifiedDate.toISOString(),
       walletData: dto.walletData,
@@ -804,7 +819,9 @@ export class PaymentsService implements OnModuleInit {
       try {
         await this.recoverTransactionStatus(transaction);
       } catch (error) {
-        this.logger.warn(`Failed to recover transaction ${transaction.invoiceId}`);
+        this.logger.warn(
+          `Failed to recover transaction ${transaction.invoiceId}: ${this.getErrorMessage(error)}`,
+        );
       }
     }
   }
@@ -839,5 +856,17 @@ export class PaymentsService implements OnModuleInit {
 
   private toDateOnlyString(date: Date): string {
     return date.toISOString().slice(0, 10);
+  }
+
+  private formatMinorAmount(amountMinor: number): string {
+    return (amountMinor / 100).toFixed(2);
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    return 'Unknown error';
   }
 }
