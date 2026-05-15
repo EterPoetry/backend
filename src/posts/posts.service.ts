@@ -733,9 +733,10 @@ export class PostsService {
   }
 
   private async getLatestPopularSnapshot(): Promise<PopularPostSnapshot> {
-    const latestSnapshot = await this.popularPostSnapshotsRepository.findOne({
-      order: { generatedAt: 'DESC' },
-    });
+    const latestSnapshot = await this.popularPostSnapshotsRepository
+      .createQueryBuilder('snapshot')
+      .orderBy('snapshot.generated_at', 'DESC')
+      .getOne();
 
     if (latestSnapshot && this.isPopularSnapshotFresh(latestSnapshot)) {
       return latestSnapshot;
@@ -754,9 +755,10 @@ export class PostsService {
       const snapshotsRepository = manager.getRepository(PopularPostSnapshot);
       const snapshotItemsRepository = manager.getRepository(PopularPostSnapshotItem);
 
-      const latestSnapshot = await snapshotsRepository.findOne({
-        order: { generatedAt: 'DESC' },
-      });
+      const latestSnapshot = await snapshotsRepository
+        .createQueryBuilder('snapshot')
+        .orderBy('snapshot.generated_at', 'DESC')
+        .getOne();
 
       if (latestSnapshot && this.isPopularSnapshotFresh(latestSnapshot)) {
         return latestSnapshot;
