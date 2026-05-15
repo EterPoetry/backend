@@ -12,7 +12,10 @@ import { PostStatus } from '../common/enums/post-status.enum';
 import { PostAudioProcessingJobStatus } from '../common/enums/post-audio-processing-job-status.enum';
 import { Post } from './entities/post.entity';
 import { PostAudioProcessingJob } from './entities/post-audio-processing-job.entity';
-import { PostListenSession } from './entities/post-listen-session.entity';
+import {
+  PostListenSession,
+  PostListenSessionRange,
+} from './entities/post-listen-session.entity';
 import { PostTextPart } from './entities/post-text-part.entity';
 import { PostAudioStorageService, UploadedPostAudio } from './post-audio-storage.service';
 import { PostAudioTranscodingService } from './post-audio-transcoding.service';
@@ -122,6 +125,9 @@ const LISTEN_COMPLETION_RATIO = 0.8;
 const LISTEN_COOLDOWN_HOURS = 12;
 const GUEST_FINGERPRINT_WINDOW_MINUTES = 30;
 const GUEST_FINGERPRINT_MAX_DISTINCT_SESSIONS = 10;
+const LISTEN_LARGE_FORWARD_SEEK_MS = 15000;
+const LISTEN_LARGE_BACKWARD_SEEK_MS = 5000;
+const LISTEN_CONSECUTIVE_ANOMALY_LIMIT = 3;
 const LISTEN_PROGRESS_MAX_SPEED_RATIO = 1.25;
 const LISTEN_PROGRESS_TIME_SKEW_MS = 1500;
 const LISTEN_POSITION_OVERSHOOT_MS = 3000;
@@ -495,6 +501,8 @@ export class PostsService {
         maxPositionMs: 0,
         lastPositionMs: 0,
         lastProgressAt: now,
+        listenedRanges: [],
+        consecutiveAnomalyCount: 0,
         endedAt: null,
         listenCountedAt: null,
         isSuspicious: false,
@@ -1441,24 +1449,49 @@ export class PostsService {
       return this.markListenSessionSuspicious(session, 'position_out_of_range', now);
     }
 
-    if (deltaPositionMs < 0) {
-      return this.markListenSessionSuspicious(session, 'position_moved_backwards', now);
-    }
-
-    if (
+    const advancedTooFast =
       elapsedRealMs !== null &&
       deltaPositionMs >
-        elapsedRealMs * LISTEN_PROGRESS_MAX_SPEED_RATIO + LISTEN_PROGRESS_TIME_SKEW_MS
-    ) {
-      return this.markListenSessionSuspicious(session, 'position_advanced_too_fast', now);
+        elapsedRealMs * LISTEN_PROGRESS_MAX_SPEED_RATIO + LISTEN_PROGRESS_TIME_SKEW_MS;
+    const isLargeBackwardSeek = deltaPositionMs <= -LISTEN_LARGE_BACKWARD_SEEK_MS;
+    const isLargeForwardSeek =
+      elapsedRealMs !== null &&
+      deltaPositionMs >
+        elapsedRealMs * LISTEN_PROGRESS_MAX_SPEED_RATIO +
+          LISTEN_PROGRESS_TIME_SKEW_MS +
+          LISTEN_LARGE_FORWARD_SEEK_MS;
+    const isAnomalousEvent = advancedTooFast || isLargeBackwardSeek || isLargeForwardSeek;
+    const consecutiveAnomalyCount = isAnomalousEvent
+      ? session.consecutiveAnomalyCount + 1
+      : 0;
+
+    if (consecutiveAnomalyCount >= LISTEN_CONSECUTIVE_ANOMALY_LIMIT) {
+      const reason = advancedTooFast
+        ? 'progress_consistently_too_fast'
+        : 'repeated_large_seek_jumps';
+      return this.markListenSessionSuspicious(session, reason, now);
     }
 
-    const listenedIncrementMs = Math.max(0, positionMs - session.maxPositionMs);
+    const listenedRanges = this.getNormalizedListenedRanges(session);
+    const shouldCreditProgress = deltaPositionMs > 0 && !advancedTooFast;
+    const creditedEndMs = shouldCreditProgress
+      ? Math.min(positionMs, session.trackDurationMs)
+      : null;
+    const updatedRanges =
+      creditedEndMs !== null
+        ? this.mergeListenedRanges(listenedRanges, {
+            startMs: Math.min(previousPositionMs, creditedEndMs),
+            endMs: Math.max(previousPositionMs, creditedEndMs),
+          })
+        : listenedRanges;
+
     await this.postListenSessionsRepository.update(session.postListenSessionId, {
-      listenedMs: session.listenedMs + listenedIncrementMs,
+      listenedMs: this.getTotalListenedMs(updatedRanges),
+      listenedRanges: updatedRanges,
       maxPositionMs: Math.max(session.maxPositionMs, positionMs),
       lastPositionMs: positionMs,
       lastProgressAt: now,
+      consecutiveAnomalyCount,
     });
 
     const updatedSession = await this.postListenSessionsRepository.findOne({
@@ -1494,6 +1527,59 @@ export class PostsService {
 
   private normalizePosition(positionMs: number, trackDurationMs: number): number {
     return Math.min(positionMs, trackDurationMs + LISTEN_POSITION_OVERSHOOT_MS);
+  }
+
+  private getNormalizedListenedRanges(
+    session: PostListenSession,
+  ): PostListenSessionRange[] {
+    const ranges = session.listenedRanges ?? [];
+    if (ranges.length > 0) {
+      return this.mergeListenedRanges([], ...ranges);
+    }
+
+    const fallbackEndMs = Math.min(
+      session.trackDurationMs,
+      Math.max(session.listenedMs, session.maxPositionMs),
+    );
+    if (fallbackEndMs <= 0) {
+      return [];
+    }
+
+    return [{ startMs: 0, endMs: fallbackEndMs }];
+  }
+
+  private mergeListenedRanges(
+    existingRanges: PostListenSessionRange[],
+    ...rangesToAdd: PostListenSessionRange[]
+  ): PostListenSessionRange[] {
+    const normalizedRanges = [...existingRanges, ...rangesToAdd]
+      .map((range) => ({
+        startMs: Math.max(0, Math.min(range.startMs, range.endMs)),
+        endMs: Math.max(0, Math.max(range.startMs, range.endMs)),
+      }))
+      .filter((range) => range.endMs > range.startMs)
+      .sort((left, right) => left.startMs - right.startMs);
+
+    if (normalizedRanges.length === 0) {
+      return [];
+    }
+
+    const mergedRanges: PostListenSessionRange[] = [normalizedRanges[0]];
+    for (const range of normalizedRanges.slice(1)) {
+      const previousRange = mergedRanges[mergedRanges.length - 1];
+      if (range.startMs <= previousRange.endMs) {
+        previousRange.endMs = Math.max(previousRange.endMs, range.endMs);
+        continue;
+      }
+
+      mergedRanges.push(range);
+    }
+
+    return mergedRanges;
+  }
+
+  private getTotalListenedMs(ranges: PostListenSessionRange[]): number {
+    return ranges.reduce((total, range) => total + (range.endMs - range.startMs), 0);
   }
 
   private hasReachedListenThreshold(session: PostListenSession): boolean {
