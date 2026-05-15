@@ -92,4 +92,6 @@ export class Post {
   likesCount?: number;
 
   commentsCount?: number;
+
+  requesterReactionId?: number | null;
 }

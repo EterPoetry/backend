@@ -31,6 +31,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import {
   CommentAuthorResponse,
+  CommentLikeMutationResponse,
   CommentResponse,
   CommentsService,
   PaginatedCommentsResponse,
@@ -53,6 +54,7 @@ import {
   PaginatedPostsResponse,
   PopularPostsResponse,
   PostAuthorProfileResponse,
+  PostLikeMutationResponse,
   PostResponse,
   PostsService,
   StartPostListenResponse,
@@ -139,6 +141,14 @@ class PaginatedCommentsResponseDto implements PaginatedCommentsResponse {
 
   @ApiProperty()
   hasMore: boolean;
+}
+
+class LikeMutationResponseDto implements PostLikeMutationResponse, CommentLikeMutationResponse {
+  @ApiProperty()
+  ok: true;
+
+  @ApiProperty()
+  likesCount: number;
 }
 
 class PostAuthorProfileResponseDto implements PostAuthorProfileResponse {
@@ -550,7 +560,7 @@ export class PostsController {
   async likePost(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
-  ): Promise<{ ok: true }> {
+  ): Promise<LikeMutationResponseDto> {
     return this.postsService.likePost(postId, this.requireUser(req).userId);
   }
 
@@ -559,7 +569,7 @@ export class PostsController {
   async unlikePost(
     @Req() req: RequestWithUser,
     @Param('postId', ParseIntPipe) postId: number,
-  ): Promise<{ ok: true }> {
+  ): Promise<LikeMutationResponseDto> {
     return this.postsService.unlikePost(postId, this.requireUser(req).userId);
   }
 
@@ -568,7 +578,7 @@ export class PostsController {
   async likeComment(
     @Req() req: RequestWithUser,
     @Param('commentId', ParseIntPipe) commentId: number,
-  ): Promise<{ ok: true }> {
+  ): Promise<LikeMutationResponseDto> {
     return this.commentsService.likeComment(commentId, this.requireUser(req).userId);
   }
 
@@ -577,7 +587,7 @@ export class PostsController {
   async unlikeComment(
     @Req() req: RequestWithUser,
     @Param('commentId', ParseIntPipe) commentId: number,
-  ): Promise<{ ok: true }> {
+  ): Promise<LikeMutationResponseDto> {
     return this.commentsService.unlikeComment(commentId, this.requireUser(req).userId);
   }
 
