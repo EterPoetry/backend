@@ -26,8 +26,8 @@ export class Subscription {
   @Column({ name: 'status', type: 'enum', enum: SubscriptionStatus })
   status: SubscriptionStatus;
 
-  @Column({ name: 'start_date', type: 'date' })
-  startDate: string;
+  @Column({ name: 'start_date', type: 'date', nullable: true })
+  startDate: string | null;
 
   @Column({ name: 'next_payment_date', type: 'date', nullable: true })
   nextPaymentDate: string | null;
@@ -39,7 +39,7 @@ export class Subscription {
   walletId: string | null;
 
   @OneToOne(() => Card, (card) => card.subscription)
-  card: Card;
+  card: Card | null;
 
   @OneToMany(() => Transaction, (transaction) => transaction.subscription)
   transactions: Transaction[];

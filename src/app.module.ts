@@ -15,6 +15,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { AuthModule } from './auth/auth.module';
 import { ProfileModule } from './profile/profile.module';
 import { PublicConfigModule } from './public-config/public-config.module';
+import { PaymentsModule } from './payments/payments.module';
 import { ENTITIES } from './database/entities';
 
 @Module({
@@ -51,6 +52,7 @@ import { ENTITIES } from './database/entities';
     AuthModule,
     ProfileModule,
     PublicConfigModule,
+    PaymentsModule,
   ],
 })
 export class AppModule {}

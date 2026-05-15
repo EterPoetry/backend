@@ -17,7 +17,7 @@ export interface PublicConfigResponse {
 
 const DEFAULT_FREE_RECORDING_DURATION_LIMIT_MINUTES = 7;
 const DEFAULT_PREMIUM_RECORDING_DURATION_LIMIT_MINUTES = 15;
-const DEFAULT_SUBSCRIPTION_PRICE_USD = 0;
+const DEFAULT_SUBSCRIPTION_PRICE_USD = 5;
 
 @Injectable()
 export class PublicConfigService {

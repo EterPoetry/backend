@@ -7,7 +7,9 @@ import { join } from 'path';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true,
+  });
   const logger = new Logger('Bootstrap');
   const trustProxy = (process.env.TRUST_PROXY ?? '').toLowerCase();
   const storageDriver = (process.env.FILE_STORAGE_DRIVER ?? 'local').toLowerCase();
