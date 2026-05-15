@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Get,
   Headers,
+  HttpCode,
   Post,
   Query,
   Req,
@@ -133,11 +134,12 @@ export class PaymentsController {
   }
 
   @Post('webhook')
+  @HttpCode(200)
   handleWebhook(
     @Req() req: RequestWithUser,
     @Headers('x-sign') signature: string | undefined,
     @Body() dto: InvoiceStatusDto,
-  ): Promise<{ ok: true }> {
+  ): Promise<void> {
     return this.paymentsService.handleWebhook(req.rawBody, signature, dto);
   }
 

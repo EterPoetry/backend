@@ -295,7 +295,7 @@ export class PaymentsService implements OnModuleInit {
     };
   }
 
-  async handleWebhook(rawBody: Buffer | string | undefined, signature: string | undefined, dto: InvoiceStatusDto): Promise<{ ok: true }> {
+  async handleWebhook(rawBody: Buffer | string | undefined, signature: string | undefined, dto: InvoiceStatusDto): Promise<void> {
     if (!rawBody || !signature) {
       throw new BadRequestException('Webhook signature headers or body are missing.');
     }
@@ -334,7 +334,7 @@ export class PaymentsService implements OnModuleInit {
         `Webhook transaction not found yet invoiceId=${normalizedInvoice.invoiceId}. Storing as pending webhook.`,
       );
       this.pendingWebhooks.set(normalizedInvoice.invoiceId, normalizedInvoice);
-      return { ok: true };
+      return;
     }
 
     this.logger.log(
@@ -342,7 +342,7 @@ export class PaymentsService implements OnModuleInit {
     );
     await this.processInvoiceStatus(transaction, normalizedInvoice);
     this.pendingWebhooks.delete(normalizedInvoice.invoiceId);
-    return { ok: true };
+    return;
   }
 
   async processInvoiceStatus(
