@@ -107,6 +107,11 @@ export interface StartPostListenResponse {
   isSuspicious: boolean;
 }
 
+export interface PostLikeMutationResponse {
+  ok: true;
+  likesCount: number;
+}
+
 export interface UpdatePostListenProgressResponse {
   listenedMs: number;
   isSuspicious: boolean;
@@ -419,7 +424,7 @@ export class PostsService {
     };
   }
 
-  async likePost(postId: number, requesterUserId: number): Promise<{ ok: true }> {
+  async likePost(postId: number, requesterUserId: number): Promise<PostLikeMutationResponse> {
     const post = await this.requirePublishedPost(postId);
 
     const alreadyLiked = await this.postReactionsRepository.exist({
@@ -439,10 +444,13 @@ export class PostsService {
       );
     }
 
-    return { ok: true };
+    return {
+      ok: true,
+      likesCount: await this.getPostLikesCount(post.postId),
+    };
   }
 
-  async unlikePost(postId: number, requesterUserId: number): Promise<{ ok: true }> {
+  async unlikePost(postId: number, requesterUserId: number): Promise<PostLikeMutationResponse> {
     const post = await this.requirePublishedPost(postId);
 
     await this.postReactionsRepository.delete({
@@ -450,7 +458,10 @@ export class PostsService {
       userId: requesterUserId,
     });
 
-    return { ok: true };
+    return {
+      ok: true,
+      likesCount: await this.getPostLikesCount(post.postId),
+    };
   }
 
   async startPostListen(
@@ -1414,6 +1425,15 @@ export class PostsService {
       entity.likesCount = computed?.likesCount ?? 0;
       entity.requesterReactionId = computed?.requesterReactionId ?? null;
     }
+  }
+
+  private async getPostLikesCount(postId: number): Promise<number> {
+    return this.postReactionsRepository.count({
+      where: {
+        postId,
+        reactionType: ReactionType.LIKE,
+      },
+    });
   }
 
   private validateTextSynchronization(

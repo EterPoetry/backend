@@ -37,6 +37,11 @@ export interface PaginatedCommentsResponse {
   hasMore: boolean;
 }
 
+export interface CommentLikeMutationResponse {
+  ok: true;
+  likesCount: number;
+}
+
 @Injectable()
 export class CommentsService {
   constructor(
@@ -171,7 +176,10 @@ export class CommentsService {
     return this.mapCommentRow(row);
   }
 
-  async likeComment(commentId: number, requesterUserId: number): Promise<{ ok: true }> {
+  async likeComment(
+    commentId: number,
+    requesterUserId: number,
+  ): Promise<CommentLikeMutationResponse> {
     const comment = await this.requireCommentOnPublishedPost(commentId);
 
     const alreadyLiked = await this.commentReactionsRepository.exist({
@@ -190,10 +198,16 @@ export class CommentsService {
       );
     }
 
-    return { ok: true };
+    return {
+      ok: true,
+      likesCount: await this.getCommentLikesCount(comment.postCommentId),
+    };
   }
 
-  async unlikeComment(commentId: number, requesterUserId: number): Promise<{ ok: true }> {
+  async unlikeComment(
+    commentId: number,
+    requesterUserId: number,
+  ): Promise<CommentLikeMutationResponse> {
     const comment = await this.requireCommentOnPublishedPost(commentId);
 
     await this.commentReactionsRepository.delete({
@@ -201,7 +215,10 @@ export class CommentsService {
       userId: requesterUserId,
     });
 
-    return { ok: true };
+    return {
+      ok: true,
+      likesCount: await this.getCommentLikesCount(comment.postCommentId),
+    };
   }
 
   async deleteComment(commentId: number, requesterUserId: number): Promise<{ ok: true }> {
@@ -347,6 +364,14 @@ export class CommentsService {
     }
 
     return comment;
+  }
+
+  private async getCommentLikesCount(commentId: number): Promise<number> {
+    return this.commentReactionsRepository.count({
+      where: {
+        postCommentId: commentId,
+      },
+    });
   }
 }
 
