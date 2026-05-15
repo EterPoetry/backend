@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsDateString,
   IsNotEmpty,
   IsObject,
@@ -33,12 +34,96 @@ class PaymentInfoDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  maskedPan?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  approvalCode?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  rrn?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tranId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  terminal?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  bank?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   paymentSystem?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  maskedPan?: string;
+  paymentMethod?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  fee?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  agentFee?: number;
+}
+
+class CancelListItemDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  createdDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  modifiedDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  amount?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  extRef?: string;
+}
+
+class TipsInfoDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  amount?: number;
 }
 
 export class InvoiceStatusDto {
@@ -56,6 +141,11 @@ export class InvoiceStatusDto {
   @IsOptional()
   @IsNumber()
   amount?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  finalAmount?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -87,4 +177,38 @@ export class InvoiceStatusDto {
   @ValidateNested()
   @Type(() => PaymentInfoDto)
   paymentInfo?: PaymentInfoDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  reference?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  destination?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  errCode?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  failureReason?: string;
+
+  @ApiPropertyOptional({ type: () => [CancelListItemDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CancelListItemDto)
+  cancelList?: CancelListItemDto[];
+
+  @ApiPropertyOptional({ type: () => TipsInfoDto })
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => TipsInfoDto)
+  tipsInfo?: TipsInfoDto;
 }

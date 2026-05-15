@@ -6,6 +6,30 @@ import { mkdirSync } from 'fs';
 import { join } from 'path';
 import { AppModule } from './app.module';
 
+interface RawBodyRequest extends express.Request {
+  rawBody?: Buffer | string;
+}
+
+function formatWebhookBody(req: RawBodyRequest): string {
+  if (typeof req.rawBody === 'string') {
+    return req.rawBody;
+  }
+
+  if (Buffer.isBuffer(req.rawBody)) {
+    return req.rawBody.toString('utf8');
+  }
+
+  if (req.body === undefined) {
+    return '[no body]';
+  }
+
+  try {
+    return JSON.stringify(req.body);
+  } catch {
+    return '[unserializable body]';
+  }
+}
+
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, {
     rawBody: true,
@@ -15,6 +39,22 @@ async function bootstrap(): Promise<void> {
   const storageDriver = (process.env.FILE_STORAGE_DRIVER ?? 'local').toLowerCase();
 
   app.use(cookieParser());
+  app.use('/payments/webhook', (req: RawBodyRequest, res, next) => {
+    const body = formatWebhookBody(req);
+    const signatureHeader = req.header('x-sign') ?? 'missing';
+
+    logger.log(
+      `Incoming payments webhook method=${req.method} path=${req.originalUrl} signature=${signatureHeader} body=${body}`,
+    );
+
+    res.on('finish', () => {
+      logger.log(
+        `Completed payments webhook method=${req.method} path=${req.originalUrl} statusCode=${res.statusCode}`,
+      );
+    });
+
+    next();
+  });
 
   if (storageDriver === 'local') {
     const uploadsRoot = join(process.cwd(), 'uploads');
