@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Post } from './entities/post.entity';
+import { PopularPostSnapshot } from './entities/popular-post-snapshot.entity';
+import { PopularPostSnapshotItem } from './entities/popular-post-snapshot-item.entity';
 import { PostTextPart } from './entities/post-text-part.entity';
 import { PostAudioProcessingJob } from './entities/post-audio-processing-job.entity';
 import { PostListenSession } from './entities/post-listen-session.entity';
@@ -20,6 +22,8 @@ import { PostAudioProcessingQueueService } from './post-audio-processing-queue.s
   imports: [
     TypeOrmModule.forFeature([
       Post,
+      PopularPostSnapshot,
+      PopularPostSnapshotItem,
       PostTextPart,
       PostAudioProcessingJob,
       PostListenSession,

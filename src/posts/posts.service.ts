@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -40,6 +41,8 @@ import { PublicConfigService } from '../public-config/public-config.service';
 import { FileStorageService } from '../storage/file-storage.service';
 import { ReactionType } from '../common/enums/reaction-type.enum';
 import { PostReaction } from '../reactions/entities/post-reaction.entity';
+import { PopularPostSnapshot } from './entities/popular-post-snapshot.entity';
+import { PopularPostSnapshotItem } from './entities/popular-post-snapshot-item.entity';
 
 export interface PostAuthorProfileResponse {
   userId: number;
@@ -88,6 +91,15 @@ export interface PaginatedPostsResponse {
   offset: number;
 }
 
+export interface PopularPostsResponse {
+  items: PostResponse[];
+  snapshotId: number;
+  snapshotGeneratedAt: Date;
+  total: number;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface StartPostListenResponse {
   token: string;
   listenedMs: number;
@@ -121,6 +133,10 @@ interface ListenSessionTokenPayload {
   clientSessionId: string;
 }
 
+interface PopularPostsCursorPayload {
+  lastRank: number;
+}
+
 const LISTEN_COMPLETION_RATIO = 0.8;
 const LISTEN_COOLDOWN_HOURS = 12;
 const GUEST_FINGERPRINT_WINDOW_MINUTES = 30;
@@ -132,6 +148,9 @@ const LISTEN_PROGRESS_MAX_SPEED_RATIO = 1.25;
 const LISTEN_PROGRESS_TIME_SKEW_MS = 1500;
 const LISTEN_POSITION_OVERSHOOT_MS = 3000;
 const POPULAR_POSTS_WINDOW_DAYS = 30;
+const POPULAR_SNAPSHOT_REFRESH_MINUTES = 5;
+const POPULAR_SNAPSHOT_RETENTION_HOURS = 1;
+const POPULAR_SNAPSHOT_MAX_POSTS = 200;
 
 @Injectable()
 export class PostsService {
@@ -152,6 +171,10 @@ export class PostsService {
     private readonly postListenSessionsRepository: Repository<PostListenSession>,
     @InjectRepository(PostReaction)
     private readonly postReactionsRepository: Repository<PostReaction>,
+    @InjectRepository(PopularPostSnapshot)
+    private readonly popularPostSnapshotsRepository: Repository<PopularPostSnapshot>,
+    @InjectRepository(PopularPostSnapshotItem)
+    private readonly popularPostSnapshotItemsRepository: Repository<PopularPostSnapshotItem>,
     private readonly postAudioStorageService: PostAudioStorageService,
     private readonly postAudioTranscodingService: PostAudioTranscodingService,
     private readonly publicConfigService: PublicConfigService,
@@ -236,54 +259,40 @@ export class PostsService {
   async getPopularPosts(
     query: GetPopularPostsQueryDto,
     requesterUserId: number | null = null,
-  ): Promise<PaginatedPostsResponse> {
-    const total = await this.postsRepository
-      .createQueryBuilder('post')
-      .where('post.status = :status', { status: PostStatus.PUBLISHED })
-      .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
-      .getCount();
+  ): Promise<PopularPostsResponse> {
+    const snapshot = query.snapshotId
+      ? await this.getPinnedPopularSnapshot(query.snapshotId)
+      : await this.getLatestPopularSnapshot();
 
-    const rankedRows = await this.postsRepository
-      .createQueryBuilder('post')
-      .leftJoin(
-        'post_reactions',
-        'postReaction',
-        'postReaction.post_id = post.post_id AND postReaction.reaction_type = :reactionType',
-        {
-          reactionType: ReactionType.LIKE,
-        },
+    const cursor = this.decodePopularPostsCursor(query.cursor);
+    const rankedRows = await this.popularPostSnapshotItemsRepository
+      .createQueryBuilder('snapshotItem')
+      .innerJoin(
+        'posts',
+        'post',
+        'post.post_id = snapshotItem.post_id AND post.status = :status',
+        { status: PostStatus.PUBLISHED },
       )
-      .leftJoin('post_comments', 'postComment', 'postComment.post_id = post.post_id')
-      .where('post.status = :status', { status: PostStatus.PUBLISHED })
-      .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
-      .select('post.post_id', 'postId')
-      .addSelect(
-        `(
-          (
-            post.listens
-            + COUNT(DISTINCT postReaction.post_reaction_id) * 3
-            + COUNT(DISTINCT postComment.post_comment_id) * 5
-          ) / POWER(
-            GREATEST(EXTRACT(EPOCH FROM (NOW() - post.created_at)) / 3600 + 2, 2),
-            0.8
-          )
-        )`,
-        'score',
-      )
-      .groupBy('post.post_id')
-      .orderBy('score', 'DESC')
-      .addOrderBy('post.created_at', 'DESC')
-      .addOrderBy('post.post_id', 'DESC')
-      .offset(query.offset)
-      .limit(query.limit)
-      .getRawMany<{ postId: string; score: string }>();
+      .where('snapshotItem.snapshot_id = :snapshotId', { snapshotId: snapshot.snapshotId })
+      .andWhere('snapshotItem.rank > :lastRank', { lastRank: cursor?.lastRank ?? 0 })
+      .orderBy('snapshotItem.rank', 'ASC')
+      .limit(query.limit + 1)
+      .select('snapshotItem.post_id', 'postId')
+      .addSelect('snapshotItem.rank', 'rank')
+      .getRawMany<{ postId: string; rank: string }>();
 
-    const postIds = rankedRows.map((row) => Number(row.postId));
+    const hasMore = rankedRows.length > query.limit;
+    const pageRows = hasMore ? rankedRows.slice(0, query.limit) : rankedRows;
+    const postIds = pageRows.map((row) => Number(row.postId));
+
     if (!postIds.length) {
       return {
         items: [],
-        total,
-        offset: query.offset,
+        snapshotId: snapshot.snapshotId,
+        snapshotGeneratedAt: snapshot.generatedAt,
+        total: snapshot.totalPosts,
+        nextCursor: null,
+        hasMore: false,
       };
     }
 
@@ -293,6 +302,7 @@ export class PostsService {
 
     const postsById = new Map(posts.map((post) => [post.postId, post]));
     const likedPostIds = await this.getRequesterLikedPostIds(postIds, requesterUserId);
+    const lastRank = Number(pageRows[pageRows.length - 1].rank);
 
     return {
       items: postIds
@@ -304,8 +314,11 @@ export class PostsService {
             isLiked: likedPostIds.has(post.postId),
           }),
         ),
-      total,
-      offset: query.offset,
+      snapshotId: snapshot.snapshotId,
+      snapshotGeneratedAt: snapshot.generatedAt,
+      total: snapshot.totalPosts,
+      nextCursor: hasMore ? this.encodePopularPostsCursor({ lastRank }) : null,
+      hasMore,
     };
   }
 
@@ -695,6 +708,149 @@ export class PostsService {
       total,
       offset,
     };
+  }
+
+  private async getPinnedPopularSnapshot(snapshotId: number): Promise<PopularPostSnapshot> {
+    const snapshot = await this.popularPostSnapshotsRepository.findOne({
+      where: { snapshotId },
+    });
+
+    if (!snapshot) {
+      throw new ConflictException({
+        message: 'Popular feed snapshot expired. Reload feed.',
+        errorCode: 'POPULAR_SNAPSHOT_EXPIRED',
+      });
+    }
+
+    if (snapshot.expiresAt.getTime() <= Date.now()) {
+      throw new ConflictException({
+        message: 'Popular feed snapshot expired. Reload feed.',
+        errorCode: 'POPULAR_SNAPSHOT_EXPIRED',
+      });
+    }
+
+    return snapshot;
+  }
+
+  private async getLatestPopularSnapshot(): Promise<PopularPostSnapshot> {
+    const latestSnapshot = await this.popularPostSnapshotsRepository.findOne({
+      order: { generatedAt: 'DESC' },
+    });
+
+    if (latestSnapshot && this.isPopularSnapshotFresh(latestSnapshot)) {
+      return latestSnapshot;
+    }
+
+    return this.createPopularSnapshot();
+  }
+
+  private isPopularSnapshotFresh(snapshot: PopularPostSnapshot): boolean {
+    const refreshWindowMs = POPULAR_SNAPSHOT_REFRESH_MINUTES * 60 * 1000;
+    return Date.now() - snapshot.generatedAt.getTime() < refreshWindowMs;
+  }
+
+  private async createPopularSnapshot(): Promise<PopularPostSnapshot> {
+    return this.dataSource.transaction(async (manager) => {
+      const snapshotsRepository = manager.getRepository(PopularPostSnapshot);
+      const snapshotItemsRepository = manager.getRepository(PopularPostSnapshotItem);
+
+      const latestSnapshot = await snapshotsRepository.findOne({
+        order: { generatedAt: 'DESC' },
+      });
+
+      if (latestSnapshot && this.isPopularSnapshotFresh(latestSnapshot)) {
+        return latestSnapshot;
+      }
+
+      const rankedRows = await manager
+        .getRepository(Post)
+        .createQueryBuilder('post')
+        .leftJoin(
+          'post_reactions',
+          'postReaction',
+          'postReaction.post_id = post.post_id AND postReaction.reaction_type = :reactionType',
+          {
+            reactionType: ReactionType.LIKE,
+          },
+        )
+        .leftJoin('post_comments', 'postComment', 'postComment.post_id = post.post_id')
+        .where('post.status = :status', { status: PostStatus.PUBLISHED })
+        .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
+        .select('post.post_id', 'postId')
+        .addSelect(
+          `(
+            (
+              post.listens
+              + COUNT(DISTINCT postReaction.post_reaction_id) * 3
+              + COUNT(DISTINCT postComment.post_comment_id) * 5
+            ) / POWER(
+              GREATEST(EXTRACT(EPOCH FROM (NOW() - post.created_at)) / 3600 + 2, 2),
+              0.8
+            )
+          )`,
+          'score',
+        )
+        .groupBy('post.post_id')
+        .orderBy('score', 'DESC')
+        .addOrderBy('post.created_at', 'DESC')
+        .addOrderBy('post.post_id', 'DESC')
+        .limit(POPULAR_SNAPSHOT_MAX_POSTS)
+        .getRawMany<{ postId: string; score: string }>();
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + POPULAR_SNAPSHOT_RETENTION_HOURS * 60 * 60 * 1000);
+      const snapshot = await snapshotsRepository.save(
+        snapshotsRepository.create({
+          generatedAt: now,
+          expiresAt,
+          totalPosts: rankedRows.length,
+        }),
+      );
+
+      if (rankedRows.length) {
+        await snapshotItemsRepository.save(
+          rankedRows.map((row, index) =>
+            snapshotItemsRepository.create({
+              snapshotId: snapshot.snapshotId,
+              postId: Number(row.postId),
+              rank: index + 1,
+              score: Number(row.score),
+            }),
+          ),
+        );
+      }
+
+      await snapshotsRepository
+        .createQueryBuilder()
+        .delete()
+        .where('expires_at <= NOW()')
+        .execute();
+
+      return snapshot;
+    });
+  }
+
+  private encodePopularPostsCursor(payload: PopularPostsCursorPayload): string {
+    return Buffer.from(JSON.stringify(payload)).toString('base64url');
+  }
+
+  private decodePopularPostsCursor(cursor?: string): PopularPostsCursorPayload | null {
+    if (!cursor) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as
+        | PopularPostsCursorPayload
+        | null;
+      if (!parsed || !Number.isInteger(parsed.lastRank) || parsed.lastRank < 0) {
+        throw new Error('Invalid popular cursor payload.');
+      }
+
+      return parsed;
+    } catch {
+      throw new BadRequestException('Popular posts cursor is invalid.');
+    }
   }
 
   async markPostProcessingCompleted(

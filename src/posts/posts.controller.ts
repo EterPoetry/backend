@@ -50,10 +50,11 @@ import { UpdatePostDto } from './dto/update-post.dto';
 import {
   CategoryResponse,
   EndPostListenResponse,
-  PostsService,
-  PostResponse,
   PaginatedPostsResponse,
+  PopularPostsResponse,
   PostAuthorProfileResponse,
+  PostResponse,
+  PostsService,
   StartPostListenResponse,
   PostTextSynchronizationItemResponse,
   UpdatePostListenProgressResponse,
@@ -235,6 +236,26 @@ class PaginatedPostsResponseDto implements PaginatedPostsResponse {
 
   @ApiProperty()
   offset: number;
+}
+
+class PopularPostsResponseDto implements PopularPostsResponse {
+  @ApiProperty({ type: [PostResponseDto] })
+  items: PostResponseDto[];
+
+  @ApiProperty()
+  snapshotId: number;
+
+  @ApiProperty()
+  snapshotGeneratedAt: Date;
+
+  @ApiProperty()
+  total: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  nextCursor: string | null;
+
+  @ApiProperty()
+  hasMore: boolean;
 }
 
 class StartPostListenResponseDto implements StartPostListenResponse {
@@ -425,7 +446,7 @@ export class PostsController {
   async getPopularPosts(
     @Req() req: RequestWithUser,
     @Query() query: GetPopularPostsQueryDto,
-  ): Promise<PaginatedPostsResponseDto> {
+  ): Promise<PopularPostsResponseDto> {
     return this.postsService.getPopularPosts(query, req.user?.userId ?? null);
   }
 
