@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -12,7 +13,10 @@ import { PostStatus } from '../common/enums/post-status.enum';
 import { PostAudioProcessingJobStatus } from '../common/enums/post-audio-processing-job-status.enum';
 import { Post } from './entities/post.entity';
 import { PostAudioProcessingJob } from './entities/post-audio-processing-job.entity';
-import { PostListenSession } from './entities/post-listen-session.entity';
+import {
+  PostListenSession,
+  PostListenSessionRange,
+} from './entities/post-listen-session.entity';
 import { PostTextPart } from './entities/post-text-part.entity';
 import { PostAudioStorageService, UploadedPostAudio } from './post-audio-storage.service';
 import { PostAudioTranscodingService } from './post-audio-transcoding.service';
@@ -37,6 +41,8 @@ import { PublicConfigService } from '../public-config/public-config.service';
 import { FileStorageService } from '../storage/file-storage.service';
 import { ReactionType } from '../common/enums/reaction-type.enum';
 import { PostReaction } from '../reactions/entities/post-reaction.entity';
+import { PopularPostSnapshot } from './entities/popular-post-snapshot.entity';
+import { PopularPostSnapshotItem } from './entities/popular-post-snapshot-item.entity';
 
 export interface PostAuthorProfileResponse {
   userId: number;
@@ -85,6 +91,15 @@ export interface PaginatedPostsResponse {
   offset: number;
 }
 
+export interface PopularPostsResponse {
+  items: PostResponse[];
+  snapshotId: number;
+  snapshotGeneratedAt: Date;
+  total: number;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface StartPostListenResponse {
   token: string;
   listenedMs: number;
@@ -118,14 +133,24 @@ interface ListenSessionTokenPayload {
   clientSessionId: string;
 }
 
+interface PopularPostsCursorPayload {
+  lastRank: number;
+}
+
 const LISTEN_COMPLETION_RATIO = 0.8;
 const LISTEN_COOLDOWN_HOURS = 12;
 const GUEST_FINGERPRINT_WINDOW_MINUTES = 30;
 const GUEST_FINGERPRINT_MAX_DISTINCT_SESSIONS = 10;
+const LISTEN_LARGE_FORWARD_SEEK_MS = 15000;
+const LISTEN_LARGE_BACKWARD_SEEK_MS = 5000;
+const LISTEN_CONSECUTIVE_ANOMALY_LIMIT = 3;
 const LISTEN_PROGRESS_MAX_SPEED_RATIO = 1.25;
 const LISTEN_PROGRESS_TIME_SKEW_MS = 1500;
 const LISTEN_POSITION_OVERSHOOT_MS = 3000;
 const POPULAR_POSTS_WINDOW_DAYS = 30;
+const POPULAR_SNAPSHOT_REFRESH_MINUTES = 5;
+const POPULAR_SNAPSHOT_RETENTION_HOURS = 1;
+const POPULAR_SNAPSHOT_MAX_POSTS = 200;
 
 @Injectable()
 export class PostsService {
@@ -146,6 +171,10 @@ export class PostsService {
     private readonly postListenSessionsRepository: Repository<PostListenSession>,
     @InjectRepository(PostReaction)
     private readonly postReactionsRepository: Repository<PostReaction>,
+    @InjectRepository(PopularPostSnapshot)
+    private readonly popularPostSnapshotsRepository: Repository<PopularPostSnapshot>,
+    @InjectRepository(PopularPostSnapshotItem)
+    private readonly popularPostSnapshotItemsRepository: Repository<PopularPostSnapshotItem>,
     private readonly postAudioStorageService: PostAudioStorageService,
     private readonly postAudioTranscodingService: PostAudioTranscodingService,
     private readonly publicConfigService: PublicConfigService,
@@ -230,54 +259,40 @@ export class PostsService {
   async getPopularPosts(
     query: GetPopularPostsQueryDto,
     requesterUserId: number | null = null,
-  ): Promise<PaginatedPostsResponse> {
-    const total = await this.postsRepository
-      .createQueryBuilder('post')
-      .where('post.status = :status', { status: PostStatus.PUBLISHED })
-      .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
-      .getCount();
+  ): Promise<PopularPostsResponse> {
+    const snapshot = query.snapshotId
+      ? await this.getPinnedPopularSnapshot(query.snapshotId)
+      : await this.getLatestPopularSnapshot();
 
-    const rankedRows = await this.postsRepository
-      .createQueryBuilder('post')
-      .leftJoin(
-        'post_reactions',
-        'postReaction',
-        'postReaction.post_id = post.post_id AND postReaction.reaction_type = :reactionType',
-        {
-          reactionType: ReactionType.LIKE,
-        },
+    const cursor = this.decodePopularPostsCursor(query.cursor);
+    const rankedRows = await this.popularPostSnapshotItemsRepository
+      .createQueryBuilder('snapshotItem')
+      .innerJoin(
+        'posts',
+        'post',
+        'post.post_id = snapshotItem.post_id AND post.status = :status',
+        { status: PostStatus.PUBLISHED },
       )
-      .leftJoin('post_comments', 'postComment', 'postComment.post_id = post.post_id')
-      .where('post.status = :status', { status: PostStatus.PUBLISHED })
-      .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
-      .select('post.post_id', 'postId')
-      .addSelect(
-        `(
-          (
-            post.listens
-            + COUNT(DISTINCT postReaction.post_reaction_id) * 3
-            + COUNT(DISTINCT postComment.post_comment_id) * 5
-          ) / POWER(
-            GREATEST(EXTRACT(EPOCH FROM (NOW() - post.created_at)) / 3600 + 2, 2),
-            0.8
-          )
-        )`,
-        'score',
-      )
-      .groupBy('post.post_id')
-      .orderBy('score', 'DESC')
-      .addOrderBy('post.created_at', 'DESC')
-      .addOrderBy('post.post_id', 'DESC')
-      .offset(query.offset)
-      .limit(query.limit)
-      .getRawMany<{ postId: string; score: string }>();
+      .where('snapshotItem.snapshot_id = :snapshotId', { snapshotId: snapshot.snapshotId })
+      .andWhere('snapshotItem.rank > :lastRank', { lastRank: cursor?.lastRank ?? 0 })
+      .orderBy('snapshotItem.rank', 'ASC')
+      .limit(query.limit + 1)
+      .select('snapshotItem.post_id', 'postId')
+      .addSelect('snapshotItem.rank', 'rank')
+      .getRawMany<{ postId: string; rank: string }>();
 
-    const postIds = rankedRows.map((row) => Number(row.postId));
+    const hasMore = rankedRows.length > query.limit;
+    const pageRows = hasMore ? rankedRows.slice(0, query.limit) : rankedRows;
+    const postIds = pageRows.map((row) => Number(row.postId));
+
     if (!postIds.length) {
       return {
         items: [],
-        total,
-        offset: query.offset,
+        snapshotId: snapshot.snapshotId,
+        snapshotGeneratedAt: snapshot.generatedAt,
+        total: snapshot.totalPosts,
+        nextCursor: null,
+        hasMore: false,
       };
     }
 
@@ -287,6 +302,7 @@ export class PostsService {
 
     const postsById = new Map(posts.map((post) => [post.postId, post]));
     const likedPostIds = await this.getRequesterLikedPostIds(postIds, requesterUserId);
+    const lastRank = Number(pageRows[pageRows.length - 1].rank);
 
     return {
       items: postIds
@@ -298,8 +314,11 @@ export class PostsService {
             isLiked: likedPostIds.has(post.postId),
           }),
         ),
-      total,
-      offset: query.offset,
+      snapshotId: snapshot.snapshotId,
+      snapshotGeneratedAt: snapshot.generatedAt,
+      total: snapshot.totalPosts,
+      nextCursor: hasMore ? this.encodePopularPostsCursor({ lastRank }) : null,
+      hasMore,
     };
   }
 
@@ -495,6 +514,8 @@ export class PostsService {
         maxPositionMs: 0,
         lastPositionMs: 0,
         lastProgressAt: now,
+        listenedRanges: [],
+        consecutiveAnomalyCount: 0,
         endedAt: null,
         listenCountedAt: null,
         isSuspicious: false,
@@ -687,6 +708,151 @@ export class PostsService {
       total,
       offset,
     };
+  }
+
+  private async getPinnedPopularSnapshot(snapshotId: number): Promise<PopularPostSnapshot> {
+    const snapshot = await this.popularPostSnapshotsRepository.findOne({
+      where: { snapshotId },
+    });
+
+    if (!snapshot) {
+      throw new ConflictException({
+        message: 'Popular feed snapshot expired. Reload feed.',
+        errorCode: 'POPULAR_SNAPSHOT_EXPIRED',
+      });
+    }
+
+    if (snapshot.expiresAt.getTime() <= Date.now()) {
+      throw new ConflictException({
+        message: 'Popular feed snapshot expired. Reload feed.',
+        errorCode: 'POPULAR_SNAPSHOT_EXPIRED',
+      });
+    }
+
+    return snapshot;
+  }
+
+  private async getLatestPopularSnapshot(): Promise<PopularPostSnapshot> {
+    const latestSnapshot = await this.popularPostSnapshotsRepository
+      .createQueryBuilder('snapshot')
+      .orderBy('snapshot.generated_at', 'DESC')
+      .getOne();
+
+    if (latestSnapshot && this.isPopularSnapshotFresh(latestSnapshot)) {
+      return latestSnapshot;
+    }
+
+    return this.createPopularSnapshot();
+  }
+
+  private isPopularSnapshotFresh(snapshot: PopularPostSnapshot): boolean {
+    const refreshWindowMs = POPULAR_SNAPSHOT_REFRESH_MINUTES * 60 * 1000;
+    return Date.now() - snapshot.generatedAt.getTime() < refreshWindowMs;
+  }
+
+  private async createPopularSnapshot(): Promise<PopularPostSnapshot> {
+    return this.dataSource.transaction(async (manager) => {
+      const snapshotsRepository = manager.getRepository(PopularPostSnapshot);
+      const snapshotItemsRepository = manager.getRepository(PopularPostSnapshotItem);
+
+      const latestSnapshot = await snapshotsRepository
+        .createQueryBuilder('snapshot')
+        .orderBy('snapshot.generated_at', 'DESC')
+        .getOne();
+
+      if (latestSnapshot && this.isPopularSnapshotFresh(latestSnapshot)) {
+        return latestSnapshot;
+      }
+
+      const rankedRows = await manager
+        .getRepository(Post)
+        .createQueryBuilder('post')
+        .leftJoin(
+          'post_reactions',
+          'postReaction',
+          'postReaction.post_id = post.post_id AND postReaction.reaction_type = :reactionType',
+          {
+            reactionType: ReactionType.LIKE,
+          },
+        )
+        .leftJoin('post_comments', 'postComment', 'postComment.post_id = post.post_id')
+        .where('post.status = :status', { status: PostStatus.PUBLISHED })
+        .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
+        .select('post.post_id', 'postId')
+        .addSelect(
+          `(
+            (
+              post.listens
+              + COUNT(DISTINCT postReaction.post_reaction_id) * 3
+              + COUNT(DISTINCT postComment.post_comment_id) * 5
+            ) / POWER(
+              GREATEST(EXTRACT(EPOCH FROM (NOW() - post.created_at)) / 3600 + 2, 2),
+              0.8
+            )
+          )`,
+          'score',
+        )
+        .groupBy('post.post_id')
+        .orderBy('score', 'DESC')
+        .addOrderBy('post.created_at', 'DESC')
+        .addOrderBy('post.post_id', 'DESC')
+        .limit(POPULAR_SNAPSHOT_MAX_POSTS)
+        .getRawMany<{ postId: string; score: string }>();
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + POPULAR_SNAPSHOT_RETENTION_HOURS * 60 * 60 * 1000);
+      const snapshot = await snapshotsRepository.save(
+        snapshotsRepository.create({
+          generatedAt: now,
+          expiresAt,
+          totalPosts: rankedRows.length,
+        }),
+      );
+
+      if (rankedRows.length) {
+        await snapshotItemsRepository.save(
+          rankedRows.map((row, index) =>
+            snapshotItemsRepository.create({
+              snapshotId: snapshot.snapshotId,
+              postId: Number(row.postId),
+              rank: index + 1,
+              score: Number(row.score),
+            }),
+          ),
+        );
+      }
+
+      await snapshotsRepository
+        .createQueryBuilder()
+        .delete()
+        .where('expires_at <= NOW()')
+        .execute();
+
+      return snapshot;
+    });
+  }
+
+  private encodePopularPostsCursor(payload: PopularPostsCursorPayload): string {
+    return Buffer.from(JSON.stringify(payload)).toString('base64url');
+  }
+
+  private decodePopularPostsCursor(cursor?: string): PopularPostsCursorPayload | null {
+    if (!cursor) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as
+        | PopularPostsCursorPayload
+        | null;
+      if (!parsed || !Number.isInteger(parsed.lastRank) || parsed.lastRank < 0) {
+        throw new Error('Invalid popular cursor payload.');
+      }
+
+      return parsed;
+    } catch {
+      throw new BadRequestException('Popular posts cursor is invalid.');
+    }
   }
 
   async markPostProcessingCompleted(
@@ -1441,24 +1607,49 @@ export class PostsService {
       return this.markListenSessionSuspicious(session, 'position_out_of_range', now);
     }
 
-    if (deltaPositionMs < 0) {
-      return this.markListenSessionSuspicious(session, 'position_moved_backwards', now);
-    }
-
-    if (
+    const advancedTooFast =
       elapsedRealMs !== null &&
       deltaPositionMs >
-        elapsedRealMs * LISTEN_PROGRESS_MAX_SPEED_RATIO + LISTEN_PROGRESS_TIME_SKEW_MS
-    ) {
-      return this.markListenSessionSuspicious(session, 'position_advanced_too_fast', now);
+        elapsedRealMs * LISTEN_PROGRESS_MAX_SPEED_RATIO + LISTEN_PROGRESS_TIME_SKEW_MS;
+    const isLargeBackwardSeek = deltaPositionMs <= -LISTEN_LARGE_BACKWARD_SEEK_MS;
+    const isLargeForwardSeek =
+      elapsedRealMs !== null &&
+      deltaPositionMs >
+        elapsedRealMs * LISTEN_PROGRESS_MAX_SPEED_RATIO +
+          LISTEN_PROGRESS_TIME_SKEW_MS +
+          LISTEN_LARGE_FORWARD_SEEK_MS;
+    const isAnomalousEvent = advancedTooFast || isLargeBackwardSeek || isLargeForwardSeek;
+    const consecutiveAnomalyCount = isAnomalousEvent
+      ? session.consecutiveAnomalyCount + 1
+      : 0;
+
+    if (consecutiveAnomalyCount >= LISTEN_CONSECUTIVE_ANOMALY_LIMIT) {
+      const reason = advancedTooFast
+        ? 'progress_consistently_too_fast'
+        : 'repeated_large_seek_jumps';
+      return this.markListenSessionSuspicious(session, reason, now);
     }
 
-    const listenedIncrementMs = Math.max(0, positionMs - session.maxPositionMs);
+    const listenedRanges = this.getNormalizedListenedRanges(session);
+    const shouldCreditProgress = deltaPositionMs > 0 && !advancedTooFast;
+    const creditedEndMs = shouldCreditProgress
+      ? Math.min(positionMs, session.trackDurationMs)
+      : null;
+    const updatedRanges =
+      creditedEndMs !== null
+        ? this.mergeListenedRanges(listenedRanges, {
+            startMs: Math.min(previousPositionMs, creditedEndMs),
+            endMs: Math.max(previousPositionMs, creditedEndMs),
+          })
+        : listenedRanges;
+
     await this.postListenSessionsRepository.update(session.postListenSessionId, {
-      listenedMs: session.listenedMs + listenedIncrementMs,
+      listenedMs: this.getTotalListenedMs(updatedRanges),
+      listenedRanges: updatedRanges,
       maxPositionMs: Math.max(session.maxPositionMs, positionMs),
       lastPositionMs: positionMs,
       lastProgressAt: now,
+      consecutiveAnomalyCount,
     });
 
     const updatedSession = await this.postListenSessionsRepository.findOne({
@@ -1494,6 +1685,59 @@ export class PostsService {
 
   private normalizePosition(positionMs: number, trackDurationMs: number): number {
     return Math.min(positionMs, trackDurationMs + LISTEN_POSITION_OVERSHOOT_MS);
+  }
+
+  private getNormalizedListenedRanges(
+    session: PostListenSession,
+  ): PostListenSessionRange[] {
+    const ranges = session.listenedRanges ?? [];
+    if (ranges.length > 0) {
+      return this.mergeListenedRanges([], ...ranges);
+    }
+
+    const fallbackEndMs = Math.min(
+      session.trackDurationMs,
+      Math.max(session.listenedMs, session.maxPositionMs),
+    );
+    if (fallbackEndMs <= 0) {
+      return [];
+    }
+
+    return [{ startMs: 0, endMs: fallbackEndMs }];
+  }
+
+  private mergeListenedRanges(
+    existingRanges: PostListenSessionRange[],
+    ...rangesToAdd: PostListenSessionRange[]
+  ): PostListenSessionRange[] {
+    const normalizedRanges = [...existingRanges, ...rangesToAdd]
+      .map((range) => ({
+        startMs: Math.max(0, Math.min(range.startMs, range.endMs)),
+        endMs: Math.max(0, Math.max(range.startMs, range.endMs)),
+      }))
+      .filter((range) => range.endMs > range.startMs)
+      .sort((left, right) => left.startMs - right.startMs);
+
+    if (normalizedRanges.length === 0) {
+      return [];
+    }
+
+    const mergedRanges: PostListenSessionRange[] = [normalizedRanges[0]];
+    for (const range of normalizedRanges.slice(1)) {
+      const previousRange = mergedRanges[mergedRanges.length - 1];
+      if (range.startMs <= previousRange.endMs) {
+        previousRange.endMs = Math.max(previousRange.endMs, range.endMs);
+        continue;
+      }
+
+      mergedRanges.push(range);
+    }
+
+    return mergedRanges;
+  }
+
+  private getTotalListenedMs(ranges: PostListenSessionRange[]): number {
+    return ranges.reduce((total, range) => total + (range.endMs - range.startMs), 0);
   }
 
   private hasReachedListenThreshold(session: PostListenSession): boolean {

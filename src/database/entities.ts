@@ -1,5 +1,7 @@
 import { User } from '../users/entities/user.entity';
 import { Post } from '../posts/entities/post.entity';
+import { PopularPostSnapshot } from '../posts/entities/popular-post-snapshot.entity';
+import { PopularPostSnapshotItem } from '../posts/entities/popular-post-snapshot-item.entity';
 import { PostTextPart } from '../posts/entities/post-text-part.entity';
 import { PostAudioProcessingJob } from '../posts/entities/post-audio-processing-job.entity';
 import { PostListenSession } from '../posts/entities/post-listen-session.entity';
@@ -21,6 +23,8 @@ import { MailRequestCounter } from '../mail/entities/mail-request-counter.entity
 export const ENTITIES = [
   User,
   Post,
+  PopularPostSnapshot,
+  PopularPostSnapshotItem,
   PostTextPart,
   PostAudioProcessingJob,
   PostListenSession,

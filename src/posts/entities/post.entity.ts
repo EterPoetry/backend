@@ -16,6 +16,7 @@ import { PostComment } from '../../comments/entities/post-comment.entity';
 import { PostComplaint } from '../../complaints/entities/post-complaint.entity';
 import { Notification } from '../../notifications/entities/notification.entity';
 import { PostStatus } from '../../common/enums/post-status.enum';
+import { PopularPostSnapshotItem } from './popular-post-snapshot-item.entity';
 
 @Entity({ name: 'posts' })
 export class Post {
@@ -84,6 +85,9 @@ export class Post {
 
   @OneToMany(() => Notification, (notification) => notification.post)
   notifications: Notification[];
+
+  @OneToMany(() => PopularPostSnapshotItem, (snapshotItem) => snapshotItem.post)
+  popularSnapshotItems: PopularPostSnapshotItem[];
 
   likesCount?: number;
 

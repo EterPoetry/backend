@@ -10,6 +10,11 @@ import {
 import { Post } from './post.entity';
 import { User } from '../../users/entities/user.entity';
 
+export interface PostListenSessionRange {
+  startMs: number;
+  endMs: number;
+}
+
 @Entity({ name: 'post_listen_sessions' })
 export class PostListenSession {
   @PrimaryGeneratedColumn({ name: 'post_listen_session_id' })
@@ -52,6 +57,12 @@ export class PostListenSession {
 
   @Column({ name: 'last_progress_at', type: 'timestamptz', nullable: true })
   lastProgressAt: Date | null;
+
+  @Column({ name: 'listened_ranges', type: 'jsonb', default: () => "'[]'" })
+  listenedRanges: PostListenSessionRange[];
+
+  @Column({ name: 'consecutive_anomaly_count', type: 'integer', default: 0 })
+  consecutiveAnomalyCount: number;
 
   @Column({ name: 'ended_at', type: 'timestamptz', nullable: true })
   endedAt: Date | null;
