@@ -1,5 +1,12 @@
-import { NestFactory } from '@nestjs/core';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { NestFactory, BaseExceptionFilter } from '@nestjs/core';
+import {
+  ArgumentsHost,
+  Catch,
+  HttpException,
+  HttpStatus,
+  Logger,
+  ValidationPipe,
+} from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import { mkdirSync } from 'fs';
@@ -12,6 +19,33 @@ interface RawBodyRequest extends express.Request {
 
 type WebhookResponse = express.Response;
 type WebhookNext = express.NextFunction;
+
+@Catch()
+class WebhookExceptionLoggingFilter extends BaseExceptionFilter {
+  private readonly logger = new Logger('WebhookException');
+
+  override catch(exception: unknown, host: ArgumentsHost): void {
+    const ctx = host.switchToHttp();
+    const request = ctx.getRequest<express.Request | undefined>();
+
+    if (request?.originalUrl === '/payments/webhook') {
+      const status =
+        exception instanceof HttpException
+          ? exception.getStatus()
+          : HttpStatus.INTERNAL_SERVER_ERROR;
+      const response =
+        exception instanceof HttpException ? exception.getResponse() : '[non-http exception]';
+      const message =
+        typeof response === 'string' ? response : JSON.stringify(response);
+
+      this.logger.error(
+        `Webhook request failed method=${request.method} path=${request.originalUrl} statusCode=${status} reason=${message}`,
+      );
+    }
+
+    super.catch(exception, host);
+  }
+}
 
 function formatWebhookBody(req: RawBodyRequest): string {
   if (typeof req.rawBody === 'string') {
@@ -45,9 +79,11 @@ async function bootstrap(): Promise<void> {
   app.use('/payments/webhook', (req: RawBodyRequest, res: WebhookResponse, next: WebhookNext) => {
     const body = formatWebhookBody(req);
     const signatureHeader = req.header('x-sign') ?? 'missing';
+    const contentType = req.header('content-type') ?? 'missing';
+    const contentLength = req.header('content-length') ?? 'missing';
 
     logger.log(
-      `Incoming payments webhook method=${req.method} path=${req.originalUrl} signature=${signatureHeader} body=${body}`,
+      `Incoming payments webhook method=${req.method} path=${req.originalUrl} contentType=${contentType} contentLength=${contentLength} signature=${signatureHeader} body=${body}`,
     );
 
     res.on('finish', () => {
@@ -88,6 +124,7 @@ async function bootstrap(): Promise<void> {
       forbidNonWhitelisted: true,
     }),
   );
+  app.useGlobalFilters(new WebhookExceptionLoggingFilter());
 
   try {
     // Keep app bootable when swagger packages are not installed yet.
