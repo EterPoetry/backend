@@ -200,6 +200,9 @@ class PostResponseDto implements PostResponse {
   @ApiProperty()
   commentsCount: number;
 
+  @ApiProperty()
+  isLiked: boolean;
+
   @ApiPropertyOptional({ nullable: true })
   originAuthorName: string | null;
 
@@ -406,7 +409,8 @@ export class PostsController {
     @Req() req: RequestWithUser,
     @Query() query: GetMyPostsQueryDto,
   ): Promise<PaginatedPostsResponseDto> {
-    return this.postsService.getMyPosts(this.requireUser(req).userId, query);
+    const userId = this.requireUser(req).userId;
+    return this.postsService.getMyPosts(userId, query, userId);
   }
 
   @Get('categories')
@@ -418,9 +422,10 @@ export class PostsController {
   @Get('popular')
   @UseGuards(OptionalJwtAuthGuard)
   async getPopularPosts(
+    @Req() req: RequestWithUser,
     @Query() query: GetPopularPostsQueryDto,
   ): Promise<PaginatedPostsResponseDto> {
-    return this.postsService.getPopularPosts(query);
+    return this.postsService.getPopularPosts(query, req.user?.userId ?? null);
   }
 
   @Get(':postId')
@@ -507,6 +512,24 @@ export class PostsController {
     @Body() dto: CreateCommentDto,
   ): Promise<CommentResponseDto> {
     return this.commentsService.createComment(postId, this.requireUser(req).userId, dto);
+  }
+
+  @HttpPost(':postId/like')
+  @UseGuards(JwtAuthGuard)
+  async likePost(
+    @Req() req: RequestWithUser,
+    @Param('postId', ParseIntPipe) postId: number,
+  ): Promise<{ ok: true }> {
+    return this.postsService.likePost(postId, this.requireUser(req).userId);
+  }
+
+  @Delete(':postId/like')
+  @UseGuards(JwtAuthGuard)
+  async unlikePost(
+    @Req() req: RequestWithUser,
+    @Param('postId', ParseIntPipe) postId: number,
+  ): Promise<{ ok: true }> {
+    return this.postsService.unlikePost(postId, this.requireUser(req).userId);
   }
 
   @HttpPost('comments/:commentId/like')

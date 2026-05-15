@@ -200,6 +200,9 @@ class PostResponseDto implements PostResponse {
   @ApiProperty()
   commentsCount: number;
 
+  @ApiProperty()
+  isLiked: boolean;
+
   @ApiPropertyOptional({ nullable: true })
   originAuthorName: string | null;
 
@@ -418,10 +421,11 @@ export class ProfileController {
   @Get(':userId/posts')
   @UseGuards(OptionalJwtAuthGuard)
   async getProfilePublishedPosts(
+    @Req() req: RequestWithUser,
     @Param('userId', ParseIntPipe) userId: number,
     @Query() query: GetMyPostsQueryDto,
   ): Promise<PaginatedPostsResponseDto> {
-    return this.profileService.getProfilePublishedPosts(userId, query);
+    return this.profileService.getProfilePublishedPosts(userId, query, req.user?.userId ?? null);
   }
 
   @Get(':userId')

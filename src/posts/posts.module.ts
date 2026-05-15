@@ -9,6 +9,7 @@ import { CategoriesModule } from '../categories/categories.module';
 import { CommentsModule } from '../comments/comments.module';
 import { UsersModule } from '../users/users.module';
 import { PublicConfigModule } from '../public-config/public-config.module';
+import { PostReaction } from '../reactions/entities/post-reaction.entity';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
 import { PostAudioStorageService } from './post-audio-storage.service';
@@ -17,7 +18,13 @@ import { PostAudioProcessingQueueService } from './post-audio-processing-queue.s
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Post, PostTextPart, PostAudioProcessingJob, PostListenSession]),
+    TypeOrmModule.forFeature([
+      Post,
+      PostTextPart,
+      PostAudioProcessingJob,
+      PostListenSession,
+      PostReaction,
+    ]),
     StorageModule,
     CategoriesModule,
     CommentsModule,

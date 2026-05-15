@@ -244,9 +244,10 @@ export class ProfileService {
   async getProfilePublishedPosts(
     profileUserId: number,
     query: GetMyPostsQueryDto,
+    requesterUserId: number | null,
   ): Promise<PaginatedPostsResponse> {
     await this.ensureUserExists(profileUserId);
-    return this.postsService.getPublishedPostsByAuthor(profileUserId, query);
+    return this.postsService.getPublishedPostsByAuthor(profileUserId, query, requesterUserId);
   }
 
   async followUser(targetUserId: number, followerUserId: number): Promise<PublicProfileResponse> {
