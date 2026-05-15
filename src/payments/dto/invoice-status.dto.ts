@@ -74,6 +74,11 @@ class PaymentInfoDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  paymentMethod?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   country?: string;
 
   @ApiPropertyOptional()
@@ -136,6 +141,11 @@ export class InvoiceStatusDto {
   @IsString()
   @IsNotEmpty()
   status: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  payMethod?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
