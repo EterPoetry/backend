@@ -59,7 +59,7 @@ export class PaymentsApiService {
     this.logger.log('Fetching payments provider public key.');
     const response = await this.get<{ publicKey?: string; key?: string } | string>(
       '/api/merchant/pubkey',
-      false,
+      true,
     );
 
     if (typeof response === 'string') {
