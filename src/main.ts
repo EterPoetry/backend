@@ -1,4 +1,4 @@
-import { NestFactory, BaseExceptionFilter } from '@nestjs/core';
+import { BaseExceptionFilter, HttpAdapterHost, NestFactory } from '@nestjs/core';
 import {
   ArgumentsHost,
   Catch,
@@ -24,9 +24,13 @@ type WebhookNext = express.NextFunction;
 class WebhookExceptionLoggingFilter extends BaseExceptionFilter {
   private readonly logger = new Logger('WebhookException');
 
+  constructor(adapterHost: HttpAdapterHost) {
+    super(adapterHost.httpAdapter);
+  }
+
   override catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
-    const request = ctx.getRequest<express.Request | undefined>();
+    const request = ctx.getRequest<RawBodyRequest | undefined>();
 
     if (request?.originalUrl === '/payments/webhook') {
       const status =
@@ -37,9 +41,10 @@ class WebhookExceptionLoggingFilter extends BaseExceptionFilter {
         exception instanceof HttpException ? exception.getResponse() : '[non-http exception]';
       const message =
         typeof response === 'string' ? response : JSON.stringify(response);
+      const body = formatWebhookBody(request);
 
       this.logger.error(
-        `Webhook request failed method=${request.method} path=${request.originalUrl} statusCode=${status} reason=${message}`,
+        `Webhook request failed method=${request.method} path=${request.originalUrl} statusCode=${status} reason=${message} body=${body}`,
       );
     }
 
@@ -72,6 +77,7 @@ async function bootstrap(): Promise<void> {
     rawBody: true,
   });
   const logger = new Logger('Bootstrap');
+  const adapterHost = app.get(HttpAdapterHost);
   const trustProxy = (process.env.TRUST_PROXY ?? '').toLowerCase();
   const storageDriver = (process.env.FILE_STORAGE_DRIVER ?? 'local').toLowerCase();
 
@@ -124,7 +130,7 @@ async function bootstrap(): Promise<void> {
       forbidNonWhitelisted: true,
     }),
   );
-  app.useGlobalFilters(new WebhookExceptionLoggingFilter());
+  app.useGlobalFilters(new WebhookExceptionLoggingFilter(adapterHost));
 
   try {
     // Keep app bootable when swagger packages are not installed yet.

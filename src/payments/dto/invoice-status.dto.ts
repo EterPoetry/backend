@@ -69,7 +69,7 @@ class PaymentInfoDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  paymentMethod?: string;
+  payMethod?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
