@@ -71,10 +71,21 @@ export interface PaginatedTransactionsResponse {
   offset: number;
 }
 
+interface NormalizedInvoiceStatus {
+  invoiceId: string;
+  status: string;
+  amountMinor: number | null;
+  currencyCode: string | null;
+  createdDate?: string;
+  modifiedDate: string;
+  walletData?: InvoiceStatusDto['walletData'];
+  paymentInfo?: InvoiceStatusDto['paymentInfo'];
+}
+
 @Injectable()
 export class PaymentsService implements OnModuleInit {
   private readonly logger = new Logger(PaymentsService.name);
-  private readonly pendingWebhooks = new Map<string, InvoiceStatusDto>();
+  private readonly pendingWebhooks = new Map<string, NormalizedInvoiceStatus>();
   private cachedPublicKey: string | null = null;
   private publicKeyFetchedAt = 0;
 
@@ -90,6 +101,7 @@ export class PaymentsService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    this.logger.log('Payments module init: starting incomplete transaction recovery.');
     await this.restoreIncompleteTransactions();
   }
 
@@ -97,6 +109,9 @@ export class PaymentsService implements OnModuleInit {
     userId: number,
   ): Promise<{ invoiceId: string; checkoutUrl: string | null }> {
     const subscription = await this.getOrCreateSubscription(userId);
+    this.logger.log(
+      `Checkout requested userId=${userId} subscriptionId=${subscription.subscriptionId} status=${subscription.status}`,
+    );
     if (subscription.status === SubscriptionStatus.ACTIVE) {
       throw new ConflictException('Subscription is already active.');
     }
@@ -117,6 +132,9 @@ export class PaymentsService implements OnModuleInit {
 
     const invoice = await this.paymentsApiService.createCheckoutInvoice(invoicePayload);
     const now = new Date(Date.now() - 1000);
+    this.logger.log(
+      `Checkout invoice created userId=${userId} subscriptionId=${subscription.subscriptionId} invoiceId=${invoice.invoiceId} checkoutUrl=${invoice.checkoutUrl ?? 'null'}`,
+    );
 
     await this.transactionsRepository.save(
       this.transactionsRepository.create({
@@ -162,6 +180,9 @@ export class PaymentsService implements OnModuleInit {
     if (!subscription) {
       throw new NotFoundException('Subscription not found.');
     }
+    this.logger.log(
+      `Cancel subscription requested userId=${userId} subscriptionId=${subscription.subscriptionId} status=${subscription.status} hasCard=${subscription.card ? 'yes' : 'no'}`,
+    );
 
     if (
       subscription.status !== SubscriptionStatus.ACTIVE &&
@@ -174,7 +195,9 @@ export class PaymentsService implements OnModuleInit {
       try {
         await this.paymentsApiService.deleteCard(subscription.card.token);
       } catch (error) {
-        this.logger.warn(`Failed to delete provider card during cancellation: ${subscription.card.token}`);
+        this.logger.warn(
+          `Failed to delete provider card during cancellation subscriptionId=${subscription.subscriptionId} cardToken=${this.maskToken(subscription.card.token)}: ${this.getErrorMessage(error)}`,
+        );
       }
     }
 
@@ -224,6 +247,9 @@ export class PaymentsService implements OnModuleInit {
     if (!subscription) {
       throw new NotFoundException('Subscription not found.');
     }
+    this.logger.log(
+      `Update card requested userId=${userId} subscriptionId=${subscription.subscriptionId} status=${subscription.status} currentCard=${subscription.card ? this.maskToken(subscription.card.token) : 'none'}`,
+    );
 
     if (subscription.status !== SubscriptionStatus.ACTIVE || !subscription.card) {
       throw new ForbiddenException('Card update is available only for active subscriptions with a linked card.');
@@ -259,6 +285,9 @@ export class PaymentsService implements OnModuleInit {
     );
 
     await this.applyPendingWebhook(invoice.invoiceId);
+    this.logger.log(
+      `Card update invoice created userId=${userId} subscriptionId=${subscription.subscriptionId} invoiceId=${invoice.invoiceId} checkoutUrl=${invoice.checkoutUrl ?? 'null'}`,
+    );
 
     return {
       invoiceId: invoice.invoiceId,
@@ -270,16 +299,22 @@ export class PaymentsService implements OnModuleInit {
     if (!rawBody || !signature) {
       throw new BadRequestException('Webhook signature headers or body are missing.');
     }
+    this.logger.log(
+      `Webhook received invoiceId=${dto.invoiceId ?? 'unknown'} status=${dto.status ?? 'unknown'} modifiedDate=${dto.modifiedDate ?? 'unknown'} rawBytes=${typeof rawBody === 'string' ? Buffer.byteLength(rawBody) : rawBody.length} signature=${this.maskToken(signature)}`,
+    );
 
     const isValid = await this.verifyWebhookSignature(rawBody, signature);
     if (!isValid) {
+      this.logger.warn(
+        `Webhook signature verification failed on cached key invoiceId=${dto.invoiceId ?? 'unknown'}. Retrying with refreshed key.`,
+      );
       const refreshedValid = await this.verifyWebhookSignature(rawBody, signature, true);
       if (!refreshedValid) {
         throw new ForbiddenException('Webhook signature is invalid.');
       }
     }
 
-    const normalizedInvoice = this.normalizeInvoiceStatusDto(dto);
+    const normalizedInvoice = this.normalizeInvoiceStatus(dto);
     const transaction = await this.transactionsRepository.findOne({
       where: [
         {
@@ -295,10 +330,16 @@ export class PaymentsService implements OnModuleInit {
     });
 
     if (!transaction) {
+      this.logger.warn(
+        `Webhook transaction not found yet invoiceId=${normalizedInvoice.invoiceId}. Storing as pending webhook.`,
+      );
       this.pendingWebhooks.set(normalizedInvoice.invoiceId, normalizedInvoice);
       return { ok: true };
     }
 
+    this.logger.log(
+      `Webhook matched transaction invoiceId=${normalizedInvoice.invoiceId} transactionId=${transaction.transactionId} currentStatus=${transaction.status ?? 'null'}`,
+    );
     await this.processInvoiceStatus(transaction, normalizedInvoice);
     this.pendingWebhooks.delete(normalizedInvoice.invoiceId);
     return { ok: true };
@@ -306,14 +347,20 @@ export class PaymentsService implements OnModuleInit {
 
   async processInvoiceStatus(
     transaction: Transaction,
-    dto: InvoiceStatusDto,
+    dto: NormalizedInvoiceStatus,
   ): Promise<void> {
     const webhookModifiedDate = new Date(dto.modifiedDate);
     if (transaction.modifiedDate && transaction.modifiedDate > webhookModifiedDate) {
+      this.logger.warn(
+        `Skipping stale invoice update invoiceId=${dto.invoiceId} transactionId=${transaction.transactionId} localModifiedDate=${transaction.modifiedDate.toISOString()} webhookModifiedDate=${webhookModifiedDate.toISOString()}`,
+      );
       return;
     }
 
     const normalizedStatus = this.mapProviderStatus(dto.status);
+    this.logger.log(
+      `Processing invoice status invoiceId=${dto.invoiceId} transactionId=${transaction.transactionId} providerStatus=${dto.status} normalizedStatus=${normalizedStatus} amountMinor=${dto.amountMinor ?? 'null'} currency=${dto.currencyCode ?? 'null'}`,
+    );
     const emissionResult = await this.dataSource.transaction(async (manager) => {
       const subscriptionsRepository = manager.getRepository(Subscription);
       const transactionsRepository = manager.getRepository(Transaction);
@@ -327,6 +374,9 @@ export class PaymentsService implements OnModuleInit {
       }
 
       if (lockedTransaction.modifiedDate && lockedTransaction.modifiedDate > webhookModifiedDate) {
+        this.logger.warn(
+          `Skipping locked stale invoice update invoiceId=${dto.invoiceId} transactionId=${lockedTransaction.transactionId} localModifiedDate=${lockedTransaction.modifiedDate.toISOString()} webhookModifiedDate=${webhookModifiedDate.toISOString()}`,
+        );
         return null;
       }
 
@@ -337,10 +387,16 @@ export class PaymentsService implements OnModuleInit {
       if (!subscription) {
         throw new NotFoundException('Subscription not found.');
       }
+      this.logger.log(
+        `Loaded subscription for invoice processing subscriptionId=${subscription.subscriptionId} userId=${subscription.userId} subscriptionStatus=${subscription.status} transactionStatus=${lockedTransaction.status ?? 'null'} isCardUpdating=${lockedTransaction.isCardUpdating}`,
+      );
 
       let shouldEmitCardLinked = false;
 
       if (dto.walletData?.walletId && dto.walletData.walletId !== subscription.walletId) {
+        this.logger.log(
+          `Updating walletId subscriptionId=${subscription.subscriptionId} from=${subscription.walletId ?? 'null'} to=${dto.walletData.walletId}`,
+        );
         await subscriptionsRepository.update(subscription.subscriptionId, {
           walletId: dto.walletData.walletId,
         });
@@ -348,6 +404,9 @@ export class PaymentsService implements OnModuleInit {
       }
 
       if (dto.walletData?.status?.toLowerCase() === 'created' && dto.walletData.cardToken) {
+        this.logger.log(
+          `Replacing linked card subscriptionId=${subscription.subscriptionId} newCardToken=${this.maskToken(dto.walletData.cardToken)} paymentSystem=${dto.paymentInfo?.paymentSystem ?? 'unknown'}`,
+        );
         await this.replaceSubscriptionCard(
           manager,
           subscription,
@@ -361,6 +420,9 @@ export class PaymentsService implements OnModuleInit {
       if (!lockedTransaction.isCardUpdating && normalizedStatus === TransactionStatus.SUCCESS) {
         const anchorDate = webhookModifiedDate;
         const startDate = subscription.startDate ?? this.toDateOnlyString(anchorDate);
+        this.logger.log(
+          `Activating subscription subscriptionId=${subscription.subscriptionId} startDate=${startDate} nextPaymentDate=${this.toDateOnlyString(this.addMonth(anchorDate))}`,
+        );
         await subscriptionsRepository.update(subscription.subscriptionId, {
           status: SubscriptionStatus.ACTIVE,
           cancellationDate: null,
@@ -376,6 +438,9 @@ export class PaymentsService implements OnModuleInit {
           lockedTransaction.transactionId,
           lockedTransaction.status,
         );
+        this.logger.log(
+          `Applying failure transition subscriptionId=${subscription.subscriptionId} nextStatus=${nextStatus}`,
+        );
 
         await subscriptionsRepository.update(subscription.subscriptionId, {
           status: nextStatus,
@@ -390,17 +455,23 @@ export class PaymentsService implements OnModuleInit {
         status: normalizedStatus,
         modifiedDate: webhookModifiedDate,
         amount:
-          dto.amount !== undefined && Number.isFinite(dto.amount)
-            ? dto.amount.toFixed(2)
+          dto.amountMinor !== null
+            ? this.formatMinorAmount(dto.amountMinor)
             : lockedTransaction.amount,
         sum:
-          dto.amount !== undefined && Number.isFinite(dto.amount)
-            ? dto.amount.toFixed(2)
+          dto.amountMinor !== null
+            ? this.formatMinorAmount(dto.amountMinor)
             : lockedTransaction.sum,
-        currency: dto.ccy?.trim() || lockedTransaction.currency,
+        currency: dto.currencyCode || lockedTransaction.currency,
       });
+      this.logger.log(
+        `Transaction updated transactionId=${lockedTransaction.transactionId} invoiceId=${lockedTransaction.invoiceId} newStatus=${normalizedStatus} amount=${dto.amountMinor !== null ? this.formatMinorAmount(dto.amountMinor) : lockedTransaction.amount ?? lockedTransaction.sum} currency=${dto.currencyCode || lockedTransaction.currency}`,
+      );
 
       if (lockedTransaction.isCardUpdating && normalizedStatus === TransactionStatus.HOLD) {
+        this.logger.log(
+          `Cancelling hold invoice after card relink invoiceId=${lockedTransaction.invoiceId} transactionId=${lockedTransaction.transactionId}`,
+        );
         await this.paymentsApiService.cancelInvoice(lockedTransaction.invoiceId);
       }
 
@@ -427,6 +498,9 @@ export class PaymentsService implements OnModuleInit {
     if (!emissionResult) {
       return;
     }
+    this.logger.log(
+      `Invoice processing completed invoiceId=${emissionResult.updatedTransaction.invoiceId} transactionId=${emissionResult.updatedTransaction.transactionId} finalTransactionStatus=${emissionResult.updatedTransaction.status ?? 'null'} finalSubscriptionStatus=${emissionResult.updatedSubscription.status}`,
+    );
 
     if (
       !emissionResult.updatedTransaction.isCardUpdating &&
@@ -455,12 +529,16 @@ export class PaymentsService implements OnModuleInit {
   }
 
   async recoverTransactionStatus(transaction: Transaction): Promise<void> {
+    this.logger.log(
+      `Recovering transaction invoiceId=${transaction.invoiceId} transactionId=${transaction.transactionId} currentStatus=${transaction.status ?? 'null'} modifiedDate=${transaction.modifiedDate?.toISOString() ?? 'null'}`,
+    );
     const providerStatus = await this.paymentsApiService.fetchInvoiceStatus(transaction.invoiceId);
-    await this.processInvoiceStatus(transaction, this.normalizeInvoiceStatusDto(providerStatus));
+    await this.processInvoiceStatus(transaction, this.normalizeInvoiceStatus(providerStatus));
   }
 
   async runBillingCycle(): Promise<void> {
     const now = new Date();
+    this.logger.log(`Starting billing cycle at ${now.toISOString()}.`);
     const activeDue = await this.subscriptionsRepository.find({
       where: {
         status: SubscriptionStatus.ACTIVE,
@@ -489,12 +567,22 @@ export class PaymentsService implements OnModuleInit {
       )
       .getMany();
 
+    this.logger.log(
+      `Billing cycle candidates activeDue=${activeDue.length} pastDue=${pastDue.length}`,
+    );
+
     for (const subscription of [...activeDue, ...pastDue]) {
       if (!subscription.card?.token) {
+        this.logger.warn(
+          `Skipping billing subscriptionId=${subscription.subscriptionId} because card token is missing.`,
+        );
         continue;
       }
 
       try {
+        this.logger.log(
+          `Creating recurring payment subscriptionId=${subscription.subscriptionId} walletId=${subscription.walletId ?? 'null'} cardToken=${this.maskToken(subscription.card.token)} nextPaymentDate=${subscription.nextPaymentDate ?? 'null'}`,
+        );
         const invoice = await this.paymentsApiService.createWalletPayment({
           amount: PREMIUM_PRICE_AMOUNT_USD_MINOR,
           ccy: PREMIUM_PRICE_CURRENCY_NUMERIC,
@@ -528,15 +616,20 @@ export class PaymentsService implements OnModuleInit {
         );
 
         await this.applyPendingWebhook(invoice.invoiceId);
+        this.logger.log(
+          `Recurring payment invoice created subscriptionId=${subscription.subscriptionId} invoiceId=${invoice.invoiceId} providerStatus=${invoice.status ?? 'null'}`,
+        );
       } catch (error) {
-        this.logger.warn(`Recurring billing failed for subscription ${subscription.subscriptionId}`);
+        this.logger.warn(
+          `Recurring billing failed for subscription ${subscription.subscriptionId}: ${this.getErrorMessage(error)}`,
+        );
       }
     }
   }
 
   async markExpiredTransactions(): Promise<void> {
     const boundary = new Date(Date.now() - INVOICE_VALIDITY_SECONDS * 1000);
-    await this.transactionsRepository
+    const result = await this.transactionsRepository
       .createQueryBuilder()
       .update(Transaction)
       .set({
@@ -546,6 +639,9 @@ export class PaymentsService implements OnModuleInit {
       .where('(status IS NULL OR status = :createdStatus)', { createdStatus: TransactionStatus.CREATED })
       .andWhere('created_at <= :boundary', { boundary: boundary.toISOString() })
       .execute();
+    this.logger.log(
+      `Expired transactions sweep boundary=${boundary.toISOString()} affected=${result.affected ?? 0}`,
+    );
   }
 
   private async getOrCreateSubscription(userId: number): Promise<Subscription> {
@@ -561,10 +657,14 @@ export class PaymentsService implements OnModuleInit {
         });
       }
 
+      this.logger.log(
+        `Using existing subscription userId=${userId} subscriptionId=${existing.subscriptionId} status=${existing.status} walletId=${existing.walletId ?? 'null'}`,
+      );
+
       return existing;
     }
 
-    return this.subscriptionsRepository.save(
+    const created = await this.subscriptionsRepository.save(
       this.subscriptionsRepository.create({
         userId,
         status: SubscriptionStatus.CREATED,
@@ -574,6 +674,10 @@ export class PaymentsService implements OnModuleInit {
         walletId: randomBytes(16).toString('hex'),
       }),
     );
+    this.logger.log(
+      `Created subscription userId=${userId} subscriptionId=${created.subscriptionId} walletId=${created.walletId ?? 'null'}`,
+    );
+    return created;
   }
 
   private getPaymentsWebhookUrl(): string {
@@ -669,7 +773,7 @@ export class PaymentsService implements OnModuleInit {
     return publicKey;
   }
 
-  private normalizeInvoiceStatusDto(dto: Partial<InvoiceStatusDto>): InvoiceStatusDto {
+  private normalizeInvoiceStatus(dto: Partial<InvoiceStatusDto>): NormalizedInvoiceStatus {
     if (!dto.invoiceId || !dto.status) {
       throw new BadRequestException('Webhook payload is incomplete.');
     }
@@ -682,8 +786,12 @@ export class PaymentsService implements OnModuleInit {
     return {
       invoiceId: dto.invoiceId,
       status: dto.status,
-      amount: dto.amount,
-      ccy: dto.ccy,
+      amountMinor:
+        typeof dto.amount === 'number' && Number.isFinite(dto.amount)
+          ? dto.amount
+          : null,
+      currencyCode:
+        dto.ccy === undefined || dto.ccy === null ? null : String(dto.ccy).trim() || null,
       createdDate: dto.createdDate,
       modifiedDate: modifiedDate.toISOString(),
       walletData: dto.walletData,
@@ -726,7 +834,9 @@ export class PaymentsService implements OnModuleInit {
       try {
         await this.paymentsApiService.deleteCard(subscription.card.token);
       } catch (error) {
-        this.logger.warn(`Failed to delete previous provider card token: ${subscription.card.token}`);
+        this.logger.warn(
+          `Failed to delete previous provider card token ${this.maskToken(subscription.card.token)}: ${this.getErrorMessage(error)}`,
+        );
       }
     }
 
@@ -800,11 +910,15 @@ export class PaymentsService implements OnModuleInit {
       take: 100,
     });
 
+    this.logger.log(`Found ${transactions.length} incomplete transactions for recovery.`);
+
     for (const transaction of transactions) {
       try {
         await this.recoverTransactionStatus(transaction);
       } catch (error) {
-        this.logger.warn(`Failed to recover transaction ${transaction.invoiceId}`);
+        this.logger.warn(
+          `Failed to recover transaction ${transaction.invoiceId}: ${this.getErrorMessage(error)}`,
+        );
       }
     }
   }
@@ -815,10 +929,13 @@ export class PaymentsService implements OnModuleInit {
       return;
     }
 
+    this.logger.log(`Applying pending webhook for invoiceId=${invoiceId}.`);
+
     const transaction = await this.transactionsRepository.findOne({
       where: { invoiceId },
     });
     if (!transaction) {
+      this.logger.warn(`Pending webhook still has no matching transaction invoiceId=${invoiceId}.`);
       return;
     }
 
@@ -839,5 +956,25 @@ export class PaymentsService implements OnModuleInit {
 
   private toDateOnlyString(date: Date): string {
     return date.toISOString().slice(0, 10);
+  }
+
+  private formatMinorAmount(amountMinor: number): string {
+    return (amountMinor / 100).toFixed(2);
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    return 'Unknown error';
+  }
+
+  private maskToken(value: string): string {
+    if (value.length <= 8) {
+      return '****';
+    }
+
+    return `${value.slice(0, 4)}...${value.slice(-4)}`;
   }
 }

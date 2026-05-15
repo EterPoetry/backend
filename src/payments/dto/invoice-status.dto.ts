@@ -3,10 +3,12 @@ import { Type } from 'class-transformer';
 import {
   IsDateString,
   IsNotEmpty,
-  IsNumber,
   IsObject,
   IsOptional,
   IsString,
+  IsNumber,
+  IsNumberString,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -57,8 +59,11 @@ export class InvoiceStatusDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
-  ccy?: string;
+  @ValidateIf((_, value) => typeof value === 'string')
+  @IsNumberString()
+  @ValidateIf((_, value) => typeof value === 'number')
+  @IsNumber()
+  ccy?: string | number;
 
   @ApiPropertyOptional()
   @IsOptional()
