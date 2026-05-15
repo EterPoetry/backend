@@ -104,6 +104,7 @@ export class PaymentsService implements OnModuleInit {
       ccy: PREMIUM_PRICE_CURRENCY_NUMERIC,
       paymentType: 'debit',
       validitySeconds: INVOICE_VALIDITY_SECONDS,
+      webHookUrl: this.getPaymentsWebhookUrl(),
       saveCardData: { saveCard: true },
       walletId: subscription.walletId,
       metadata: {
@@ -231,6 +232,7 @@ export class PaymentsService implements OnModuleInit {
       ccy: CARD_UPDATE_CURRENCY_NUMERIC,
       paymentType: 'hold',
       validitySeconds: INVOICE_VALIDITY_SECONDS,
+      webHookUrl: this.getPaymentsWebhookUrl(),
       saveCardData: { saveCard: true },
       walletId: subscription.walletId,
       metadata: {
@@ -496,6 +498,7 @@ export class PaymentsService implements OnModuleInit {
           ccy: PREMIUM_PRICE_CURRENCY_NUMERIC,
           paymentType: 'debit',
           initiationKind: 'merchant',
+          webHookUrl: this.getPaymentsWebhookUrl(),
           cardToken: subscription.card.token,
           walletId: subscription.walletId,
           metadata: {
@@ -569,6 +572,20 @@ export class PaymentsService implements OnModuleInit {
         walletId: randomBytes(16).toString('hex'),
       }),
     );
+  }
+
+  private getPaymentsWebhookUrl(): string {
+    const value = this.configService.get<string>('PAYMENTS_WEBHOOK_URL')?.trim();
+
+    if (!value) {
+      throw new BadRequestException('PAYMENTS_WEBHOOK_URL is not configured.');
+    }
+
+    try {
+      return new URL(value).toString();
+    } catch {
+      throw new BadRequestException('PAYMENTS_WEBHOOK_URL must be a valid absolute URL.');
+    }
   }
 
   private async requireSubscription(userId: number): Promise<Subscription> {
