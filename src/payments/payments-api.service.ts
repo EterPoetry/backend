@@ -177,7 +177,13 @@ export class PaymentsApiService {
       return undefined as T;
     }
 
-    const json = (await response.json()) as T;
+    const responseText = await response.text();
+    if (!responseText.trim()) {
+      this.logger.log(`Payments API response ${response.status} ${url.pathname}${url.search}: [empty body]`);
+      return undefined as T;
+    }
+
+    const json = JSON.parse(responseText) as T;
     this.logger.log(
       `Payments API response ${response.status} ${url.pathname}${url.search}: ${this.stringifyForLog(
         this.sanitizePayloadForLog(json),
