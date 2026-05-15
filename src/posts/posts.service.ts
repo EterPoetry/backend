@@ -236,8 +236,7 @@ export class PostsService {
 
   async getPostDetails(postId: number, requesterUserId: number | null): Promise<PostResponse> {
     const post = await this.requireReadablePost(postId, requesterUserId);
-    const likedPostIds = await this.getRequesterLikedPostIds([post.postId], requesterUserId);
-    return this.buildPostResponse(post, { isLiked: likedPostIds.has(post.postId) });
+    return this.buildPostResponse(post);
   }
 
   async getMyPosts(
@@ -301,19 +300,13 @@ export class PostsService {
       .getMany();
 
     const postsById = new Map(posts.map((post) => [post.postId, post]));
-    const likedPostIds = await this.getRequesterLikedPostIds(postIds, requesterUserId);
     const lastRank = Number(pageRows[pageRows.length - 1].rank);
 
     return {
       items: postIds
         .map((postId) => postsById.get(postId))
         .filter((post): post is Post => Boolean(post))
-        .map((post) =>
-          this.buildPostResponse(post, {
-            includeTextSynchronization: false,
-            isLiked: likedPostIds.has(post.postId),
-          }),
-        ),
+        .map((post) => this.buildPostResponse(post, { includeTextSynchronization: false })),
       snapshotId: snapshot.snapshotId,
       snapshotGeneratedAt: snapshot.generatedAt,
       total: snapshot.totalPosts,
@@ -337,18 +330,9 @@ export class PostsService {
     queryBuilder.skip(query.offset).take(query.limit);
 
     const [posts, total] = await queryBuilder.getManyAndCount();
-    const likedPostIds = await this.getRequesterLikedPostIds(
-      posts.map((post) => post.postId),
-      requesterUserId,
-    );
 
     return {
-      items: posts.map((post) =>
-        this.buildPostResponse(post, {
-          includeTextSynchronization: false,
-          isLiked: likedPostIds.has(post.postId),
-        }),
-      ),
+      items: posts.map((post) => this.buildPostResponse(post, { includeTextSynchronization: false })),
       total,
       offset: query.offset,
     };
@@ -424,18 +408,12 @@ export class PostsService {
       .getMany();
 
     const postsById = new Map(posts.map((post) => [post.postId, post]));
-    const likedPostIds = await this.getRequesterLikedPostIds(postIds, requesterUserId);
 
     return {
       items: postIds
         .map((postId) => postsById.get(postId))
         .filter((post): post is Post => Boolean(post))
-        .map((post) =>
-          this.buildPostResponse(post, {
-            includeTextSynchronization: false,
-            isLiked: likedPostIds.has(post.postId),
-          }),
-        ),
+        .map((post) => this.buildPostResponse(post, { includeTextSynchronization: false })),
       total,
       offset: query.offset,
     };
@@ -693,18 +671,9 @@ export class PostsService {
     queryBuilder.skip(offset).take(limit);
 
     const [posts, total] = await queryBuilder.getManyAndCount();
-    const likedPostIds = await this.getRequesterLikedPostIds(
-      posts.map((post) => post.postId),
-      requesterUserId,
-    );
 
     return {
-      items: posts.map((post) =>
-        this.buildPostResponse(post, {
-          includeTextSynchronization: false,
-          isLiked: likedPostIds.has(post.postId),
-        }),
-      ),
+      items: posts.map((post) => this.buildPostResponse(post, { includeTextSynchronization: false })),
       total,
       offset,
     };
@@ -1084,6 +1053,7 @@ export class PostsService {
     options: { includeTextSynchronization?: boolean; isLiked?: boolean } = {},
   ): PostResponse {
     const includeTextSynchronization = options.includeTextSynchronization ?? true;
+    const isLiked = options.isLiked ?? Boolean(post.requesterReaction?.postReactionId);
 
     return {
       postId: post.postId,
@@ -1097,7 +1067,7 @@ export class PostsService {
       listens: post.listens,
       likesCount: post.likesCount ?? 0,
       commentsCount: post.commentsCount ?? 0,
-      isLiked: options.isLiked ?? false,
+      isLiked,
       originAuthorName: post.originAuthorName,
       ...(includeTextSynchronization
         ? {
@@ -1351,7 +1321,7 @@ export class PostsService {
   }
 
   private createPostDetailsQueryBuilder(_requesterUserId: number | null = null) {
-    return this.postsRepository
+    const queryBuilder = this.postsRepository
       .createQueryBuilder('post')
       .leftJoinAndSelect('post.author', 'author')
       .leftJoinAndSelect('author.subscription', 'authorSubscription')
@@ -1364,28 +1334,21 @@ export class PostsService {
         }),
       )
       .loadRelationCountAndMap('post.commentsCount', 'post.comments');
-  }
 
-  private async getRequesterLikedPostIds(
-    postIds: number[],
-    requesterUserId: number | null,
-  ): Promise<Set<number>> {
-    if (requesterUserId === null || postIds.length === 0) {
-      return new Set<number>();
+    if (_requesterUserId !== null) {
+      queryBuilder.leftJoinAndMapOne(
+        'post.requesterReaction',
+        'post.postReactions',
+        'requesterReaction',
+        'requesterReaction.user_id = :requesterUserId AND requesterReaction.reaction_type = :requesterReactionType',
+        {
+          requesterUserId: _requesterUserId,
+          requesterReactionType: ReactionType.LIKE,
+        },
+      );
     }
 
-    const reactions = await this.postReactionsRepository.find({
-      where: {
-        postId: In(postIds),
-        userId: requesterUserId,
-        reactionType: ReactionType.LIKE,
-      },
-      select: {
-        postId: true,
-      },
-    });
-
-    return new Set(reactions.map((reaction) => reaction.postId));
+    return queryBuilder;
   }
 
   private validateTextSynchronization(
