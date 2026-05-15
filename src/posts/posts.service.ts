@@ -1348,7 +1348,14 @@ export class PostsService {
             .andWhere('postReactionCount.reaction_type = :reactionType'),
         'post_likes_count',
       )
-      .loadRelationCountAndMap('post.commentsCount', 'post.comments')
+      .addSelect(
+        (subQuery) =>
+          subQuery
+            .select('COUNT(postCommentCount.post_comment_id)')
+            .from('post_comments', 'postCommentCount')
+            .where('postCommentCount.post_id = post.post_id'),
+        'post_comments_count',
+      )
       .setParameter('reactionType', ReactionType.LIKE);
 
     if (_requesterUserId !== null) {
@@ -1401,7 +1408,10 @@ export class PostsService {
   }
 
   private applyComputedPostFields(entities: Post[], rawRows: Record<string, unknown>[]): void {
-    const computedByPostId = new Map<number, { likesCount: number; requesterReactionId: number | null }>();
+    const computedByPostId = new Map<
+      number,
+      { likesCount: number; commentsCount: number; requesterReactionId: number | null }
+    >();
 
     for (const row of rawRows) {
       const postId = Number(row.post_post_id);
@@ -1413,6 +1423,7 @@ export class PostsService {
       const requesterReactionIdRaw = row.post_requester_reaction_id;
       computedByPostId.set(postId, {
         likesCount: Number(row.post_likes_count ?? 0),
+        commentsCount: Number(row.post_comments_count ?? 0),
         requesterReactionId:
           requesterReactionIdRaw === null || requesterReactionIdRaw === undefined
             ? null
@@ -1423,6 +1434,7 @@ export class PostsService {
     for (const entity of entities) {
       const computed = computedByPostId.get(entity.postId);
       entity.likesCount = computed?.likesCount ?? 0;
+      entity.commentsCount = computed?.commentsCount ?? 0;
       entity.requesterReactionId = computed?.requesterReactionId ?? null;
     }
   }
