@@ -21,10 +21,12 @@ import { PaymentsApiService } from './payments-api.service';
 import { PaymentsGateway } from './payments.gateway';
 import {
   CARD_UPDATE_AMOUNT_UAH,
+  CARD_UPDATE_AMOUNT_UAH_MINOR,
   CARD_UPDATE_CURRENCY_CODE,
   CARD_UPDATE_CURRENCY_NUMERIC,
   INVOICE_VALIDITY_SECONDS,
   PREMIUM_PRICE_AMOUNT_USD,
+  PREMIUM_PRICE_AMOUNT_USD_MINOR,
   PREMIUM_PRICE_CURRENCY_CODE,
   PREMIUM_PRICE_CURRENCY_NUMERIC,
   PUBLIC_KEY_REFRESH_COOLDOWN_MS,
@@ -100,10 +102,10 @@ export class PaymentsService implements OnModuleInit {
     }
 
     const invoicePayload = {
-      amount: Number(PREMIUM_PRICE_AMOUNT_USD),
+      amount: PREMIUM_PRICE_AMOUNT_USD_MINOR,
       ccy: PREMIUM_PRICE_CURRENCY_NUMERIC,
       paymentType: 'debit',
-      validitySeconds: INVOICE_VALIDITY_SECONDS,
+      validity: INVOICE_VALIDITY_SECONDS,
       webHookUrl: this.getPaymentsWebhookUrl(),
       saveCardData: { saveCard: true },
       walletId: subscription.walletId,
@@ -228,10 +230,10 @@ export class PaymentsService implements OnModuleInit {
     }
 
     const invoice = await this.paymentsApiService.createCheckoutInvoice({
-      amount: Number(CARD_UPDATE_AMOUNT_UAH),
+      amount: CARD_UPDATE_AMOUNT_UAH_MINOR,
       ccy: CARD_UPDATE_CURRENCY_NUMERIC,
       paymentType: 'hold',
-      validitySeconds: INVOICE_VALIDITY_SECONDS,
+      validity: INVOICE_VALIDITY_SECONDS,
       webHookUrl: this.getPaymentsWebhookUrl(),
       saveCardData: { saveCard: true },
       walletId: subscription.walletId,
@@ -494,7 +496,7 @@ export class PaymentsService implements OnModuleInit {
 
       try {
         const invoice = await this.paymentsApiService.createWalletPayment({
-          amount: Number(PREMIUM_PRICE_AMOUNT_USD),
+          amount: PREMIUM_PRICE_AMOUNT_USD_MINOR,
           ccy: PREMIUM_PRICE_CURRENCY_NUMERIC,
           paymentType: 'debit',
           initiationKind: 'merchant',
@@ -640,14 +642,14 @@ export class PaymentsService implements OnModuleInit {
     forceRefresh = false,
   ): Promise<boolean> {
     const publicKey = await this.fetchAndCachePublicKey(forceRefresh);
-    const verifier = createVerify('RSA-SHA256');
+    const verifier = createVerify('SHA256');
     verifier.update(rawBody);
     verifier.end();
 
     try {
-      return verifier.verify(publicKey, signature, 'base64');
+      return verifier.verify(publicKey, Buffer.from(signature, 'base64'));
     } catch {
-      return verifier.verify(publicKey, Buffer.from(signature, 'utf8'));
+      return false;
     }
   }
 

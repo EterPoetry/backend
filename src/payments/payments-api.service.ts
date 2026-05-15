@@ -67,7 +67,7 @@ export class PaymentsApiService {
       throw new ServiceUnavailableException('Payment provider public key is missing.');
     }
 
-    return publicKey;
+    return Buffer.from(publicKey, 'base64').toString('utf8');
   }
 
   async cancelInvoice(invoiceId: string): Promise<void> {
@@ -75,7 +75,9 @@ export class PaymentsApiService {
   }
 
   async fetchInvoiceStatus(invoiceId: string): Promise<ProviderInvoiceStatusResponse> {
-    return this.post<ProviderInvoiceStatusResponse>('/api/merchant/invoice/status', { invoiceId });
+    return this.get<ProviderInvoiceStatusResponse>(
+      `/api/merchant/invoice/status?invoiceId=${encodeURIComponent(invoiceId)}`,
+    );
   }
 
   async createWalletPayment(payload: Record<string, unknown>): Promise<ProviderInvoiceResponse> {
