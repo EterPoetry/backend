@@ -93,5 +93,5 @@ export class Post {
 
   commentsCount?: number;
 
-  requesterReaction?: PostReaction | null;
+  requesterReactionId?: number | null;
 }

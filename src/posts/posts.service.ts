@@ -229,9 +229,9 @@ export class PostsService {
   }
 
   async getPostById(postId: number, requesterUserId: number | null = null): Promise<Post | null> {
-    return this.createPostDetailsQueryBuilder(requesterUserId)
-      .where('post.post_id = :postId', { postId })
-      .getOne();
+    return this.getOnePostWithComputedFields(
+      this.createPostDetailsQueryBuilder(requesterUserId).where('post.post_id = :postId', { postId }),
+    );
   }
 
   async getPostDetails(postId: number, requesterUserId: number | null): Promise<PostResponse> {
@@ -295,9 +295,9 @@ export class PostsService {
       };
     }
 
-    const posts = await this.createPostDetailsQueryBuilder(requesterUserId)
-      .where('post.post_id IN (:...postIds)', { postIds })
-      .getMany();
+    const posts = await this.getPostsWithComputedFields(
+      this.createPostDetailsQueryBuilder(requesterUserId).where('post.post_id IN (:...postIds)', { postIds }),
+    );
 
     const postsById = new Map(posts.map((post) => [post.postId, post]));
     const lastRank = Number(pageRows[pageRows.length - 1].rank);
@@ -329,7 +329,7 @@ export class PostsService {
     queryBuilder.distinct(true);
     queryBuilder.skip(query.offset).take(query.limit);
 
-    const [posts, total] = await queryBuilder.getManyAndCount();
+    const { posts, total } = await this.getPostsWithComputedFieldsAndCount(queryBuilder);
 
     return {
       items: posts.map((post) => this.buildPostResponse(post, { includeTextSynchronization: false })),
@@ -403,9 +403,9 @@ export class PostsService {
       };
     }
 
-    const posts = await this.createPostDetailsQueryBuilder(requesterUserId)
-      .where('post.post_id IN (:...postIds)', { postIds })
-      .getMany();
+    const posts = await this.getPostsWithComputedFields(
+      this.createPostDetailsQueryBuilder(requesterUserId).where('post.post_id IN (:...postIds)', { postIds }),
+    );
 
     const postsById = new Map(posts.map((post) => [post.postId, post]));
 
@@ -670,7 +670,7 @@ export class PostsService {
     queryBuilder.distinct(true);
     queryBuilder.skip(offset).take(limit);
 
-    const [posts, total] = await queryBuilder.getManyAndCount();
+    const { posts, total } = await this.getPostsWithComputedFieldsAndCount(queryBuilder);
 
     return {
       items: posts.map((post) => this.buildPostResponse(post, { includeTextSynchronization: false })),
@@ -1053,7 +1053,7 @@ export class PostsService {
     options: { includeTextSynchronization?: boolean; isLiked?: boolean } = {},
   ): PostResponse {
     const includeTextSynchronization = options.includeTextSynchronization ?? true;
-    const isLiked = options.isLiked ?? Boolean(post.requesterReaction?.postReactionId);
+    const isLiked = options.isLiked ?? Boolean(post.requesterReactionId);
 
     return {
       postId: post.postId,
@@ -1328,27 +1328,91 @@ export class PostsService {
       .leftJoinAndSelect('post.textParts', 'textPart')
       .leftJoinAndSelect('post.postCategories', 'postCategory')
       .leftJoinAndSelect('postCategory.category', 'category')
-      .loadRelationCountAndMap('post.likesCount', 'post.postReactions', 'postReaction', (queryBuilder) =>
-        queryBuilder.where('postReaction.reactionType = :reactionType', {
-          reactionType: ReactionType.LIKE,
-        }),
+      .addSelect(
+        (subQuery) =>
+          subQuery
+            .select('COUNT(postReactionCount.post_reaction_id)')
+            .from(PostReaction, 'postReactionCount')
+            .where('postReactionCount.post_id = post.post_id')
+            .andWhere('postReactionCount.reaction_type = :reactionType'),
+        'post_likes_count',
       )
-      .loadRelationCountAndMap('post.commentsCount', 'post.comments');
+      .loadRelationCountAndMap('post.commentsCount', 'post.comments')
+      .setParameter('reactionType', ReactionType.LIKE);
 
     if (_requesterUserId !== null) {
-      queryBuilder.leftJoinAndMapOne(
-        'post.requesterReaction',
-        'post.postReactions',
-        'requesterReaction',
-        'requesterReaction.user_id = :requesterUserId AND requesterReaction.reaction_type = :requesterReactionType',
-        {
-          requesterUserId: _requesterUserId,
-          requesterReactionType: ReactionType.LIKE,
-        },
+      queryBuilder.addSelect(
+        (subQuery) =>
+          subQuery
+            .select('requesterReaction.post_reaction_id')
+            .from(PostReaction, 'requesterReaction')
+            .where('requesterReaction.post_id = post.post_id')
+            .andWhere('requesterReaction.user_id = :requesterUserId')
+            .andWhere('requesterReaction.reaction_type = :reactionType')
+            .limit(1),
+        'post_requester_reaction_id',
       );
     }
 
     return queryBuilder;
+  }
+
+  private async getOnePostWithComputedFields(
+    queryBuilder: ReturnType<PostsService['createPostDetailsQueryBuilder']>,
+  ): Promise<Post | null> {
+    const posts = await this.getPostsWithComputedFields(queryBuilder);
+    return posts[0] ?? null;
+  }
+
+  private async getPostsWithComputedFields(
+    queryBuilder: ReturnType<PostsService['createPostDetailsQueryBuilder']>,
+  ): Promise<Post[]> {
+    const { raw, entities } = await queryBuilder.getRawAndEntities();
+    this.applyComputedPostFields(entities, raw);
+    return entities;
+  }
+
+  private async getPostsWithComputedFieldsAndCount(
+    queryBuilder: ReturnType<PostsService['createPostDetailsQueryBuilder']>,
+  ): Promise<{ posts: Post[]; total: number }> {
+    const [result, total] = await Promise.all([
+      queryBuilder.getRawAndEntities(),
+      queryBuilder.clone().skip(undefined).take(undefined).offset(undefined).limit(undefined).getCount(),
+    ]);
+
+    this.applyComputedPostFields(result.entities, result.raw);
+
+    return {
+      posts: result.entities,
+      total,
+    };
+  }
+
+  private applyComputedPostFields(entities: Post[], rawRows: Record<string, unknown>[]): void {
+    const computedByPostId = new Map<number, { likesCount: number; requesterReactionId: number | null }>();
+
+    for (const row of rawRows) {
+      const postId = Number(row.post_post_id);
+
+      if (!Number.isFinite(postId) || computedByPostId.has(postId)) {
+        continue;
+      }
+
+      const requesterReactionIdRaw = row.post_requester_reaction_id;
+      computedByPostId.set(postId, {
+        likesCount: Number(row.post_likes_count ?? 0),
+        requesterReactionId:
+          requesterReactionIdRaw === null || requesterReactionIdRaw === undefined
+            ? null
+            : Number(requesterReactionIdRaw),
+      });
+    }
+
+    for (const entity of entities) {
+      const computed = computedByPostId.get(entity.postId);
+      entity.likesCount = computed?.likesCount ?? 0;
+      entity.requesterReactionId = computed?.requesterReactionId ?? null;
+    }
   }
 
   private validateTextSynchronization(
