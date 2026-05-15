@@ -21,6 +21,10 @@ import {
   MyPostsSortBy,
   SortOrder,
 } from './dto/get-my-posts-query.dto';
+import {
+  GetPublishedPostsSearchQueryDto,
+  PublishedPostsSearchSortBy,
+} from './dto/get-published-posts-search-query.dto';
 import { GetPopularPostsQueryDto } from './dto/get-popular-posts-query.dto';
 import { PostTextSynchronizationItemDto } from './dto/update-post-text-synchronization.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
@@ -267,6 +271,125 @@ export class PostsService {
       .offset(query.offset)
       .limit(query.limit)
       .getRawMany<{ postId: string; score: string }>();
+
+    const postIds = rankedRows.map((row) => Number(row.postId));
+    if (!postIds.length) {
+      return {
+        items: [],
+        total,
+        offset: query.offset,
+      };
+    }
+
+    const posts = await this.createPostDetailsQueryBuilder(requesterUserId)
+      .where('post.post_id IN (:...postIds)', { postIds })
+      .getMany();
+
+    const postsById = new Map(posts.map((post) => [post.postId, post]));
+    const likedPostIds = await this.getRequesterLikedPostIds(postIds, requesterUserId);
+
+    return {
+      items: postIds
+        .map((postId) => postsById.get(postId))
+        .filter((post): post is Post => Boolean(post))
+        .map((post) =>
+          this.buildPostResponse(post, {
+            includeTextSynchronization: false,
+            isLiked: likedPostIds.has(post.postId),
+          }),
+        ),
+      total,
+      offset: query.offset,
+    };
+  }
+
+  async searchPublishedPosts(
+    query: GetPublishedPostsSearchQueryDto,
+    requesterUserId: number | null = null,
+  ): Promise<PaginatedPostsResponse> {
+    if (query.sortBy === PublishedPostsSearchSortBy.POPULAR) {
+      return this.searchPublishedPostsByPopularity(query, requesterUserId);
+    }
+
+    const queryBuilder = this.createPublishedPostsSearchBaseQuery(query, requesterUserId);
+    this.applyPublishedPostsSearchSorting(queryBuilder, query.sortBy);
+
+    queryBuilder.distinct(true);
+    queryBuilder.skip(query.offset).take(query.limit);
+
+    const [posts, total] = await queryBuilder.getManyAndCount();
+    const likedPostIds = await this.getRequesterLikedPostIds(
+      posts.map((post) => post.postId),
+      requesterUserId,
+    );
+
+    return {
+      items: posts.map((post) =>
+        this.buildPostResponse(post, {
+          includeTextSynchronization: false,
+          isLiked: likedPostIds.has(post.postId),
+        }),
+      ),
+      total,
+      offset: query.offset,
+    };
+  }
+
+  private async searchPublishedPostsByPopularity(
+    query: GetPublishedPostsSearchQueryDto,
+    requesterUserId: number | null,
+  ): Promise<PaginatedPostsResponse> {
+    const rankingQueryBuilder = this.postsRepository
+      .createQueryBuilder('post')
+      .where('post.status = :status', { status: PostStatus.PUBLISHED });
+
+    if (query.search?.trim()) {
+      rankingQueryBuilder.andWhere(
+        `(COALESCE(post.title, '') ILIKE :search OR COALESCE(post.description, '') ILIKE :search OR COALESCE(post.text, '') ILIKE :search)`,
+        { search: `%${query.search.trim()}%` },
+      );
+    }
+
+    if (query.categoryId !== undefined) {
+      rankingQueryBuilder.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM post_categories popularity_post_category
+          WHERE popularity_post_category.post_id = post.post_id
+            AND popularity_post_category.category_id = :categoryId
+        )`,
+        { categoryId: query.categoryId },
+      );
+    }
+
+    const total = await rankingQueryBuilder.getCount();
+
+    const rankedRows = await rankingQueryBuilder
+      .select('post.post_id', 'postId')
+      .addSelect(
+        `(
+          post.listens
+          + (
+            SELECT COUNT(*)
+            FROM post_reactions popularity_post_reaction
+            WHERE popularity_post_reaction.post_id = post.post_id
+              AND popularity_post_reaction.reaction_type = :reactionType
+          ) * 3
+          + (
+            SELECT COUNT(*)
+            FROM post_comments popularity_post_comment
+            WHERE popularity_post_comment.post_id = post.post_id
+          ) * 5
+        )`,
+        'popularityscore',
+      )
+      .setParameter('reactionType', ReactionType.LIKE)
+      .orderBy('popularityscore', 'DESC')
+      .addOrderBy('post.created_at', 'DESC')
+      .addOrderBy('post.post_id', 'DESC')
+      .offset(query.offset)
+      .limit(query.limit)
+      .getRawMany<{ postId: string }>();
 
     const postIds = rankedRows.map((row) => Number(row.postId));
     if (!postIds.length) {
@@ -844,6 +967,43 @@ export class PostsService {
       default:
         return 'post.createdAt';
     }
+  }
+
+  private applyPublishedPostsSearchSorting(
+    queryBuilder: ReturnType<PostsService['createPostDetailsQueryBuilder']>,
+    sortBy: PublishedPostsSearchSortBy,
+  ): void {
+    if (sortBy === PublishedPostsSearchSortBy.OLDEST) {
+      queryBuilder.orderBy('post.createdAt', 'ASC').addOrderBy('post.postId', 'ASC');
+      return;
+    }
+
+    queryBuilder.orderBy('post.createdAt', 'DESC').addOrderBy('post.postId', 'DESC');
+  }
+
+  private createPublishedPostsSearchBaseQuery(
+    query: GetPublishedPostsSearchQueryDto,
+    requesterUserId: number | null = null,
+  ) {
+    const queryBuilder = this.createPostDetailsQueryBuilder(requesterUserId).where(
+      'post.status = :status',
+      { status: PostStatus.PUBLISHED },
+    );
+
+    if (query.search?.trim()) {
+      queryBuilder.andWhere(
+        `(COALESCE(post.title, '') ILIKE :search OR COALESCE(post.description, '') ILIKE :search OR COALESCE(post.text, '') ILIKE :search)`,
+        { search: `%${query.search.trim()}%` },
+      );
+    }
+
+    if (query.categoryId !== undefined) {
+      queryBuilder.andWhere('postCategory.category_id = :categoryId', {
+        categoryId: query.categoryId,
+      });
+    }
+
+    return queryBuilder;
   }
 
   private async requireOwnedPost(postId: number, requesterUserId: number): Promise<Post> {

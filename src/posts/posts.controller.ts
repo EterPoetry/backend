@@ -41,6 +41,7 @@ import { PostStatus } from '../common/enums/post-status.enum';
 import { GetCategoriesQueryDto } from './dto/get-categories-query.dto';
 import { EndPostListenDto } from './dto/end-post-listen.dto';
 import { GetMyPostsQueryDto } from './dto/get-my-posts-query.dto';
+import { GetPublishedPostsSearchQueryDto } from './dto/get-published-posts-search-query.dto';
 import { GetPopularPostsQueryDto } from './dto/get-popular-posts-query.dto';
 import { StartPostListenDto } from './dto/start-post-listen.dto';
 import { UpdatePostListenProgressDto } from './dto/update-post-listen-progress.dto';
@@ -426,6 +427,15 @@ export class PostsController {
     @Query() query: GetPopularPostsQueryDto,
   ): Promise<PaginatedPostsResponseDto> {
     return this.postsService.getPopularPosts(query, req.user?.userId ?? null);
+  }
+
+  @Get('search')
+  @UseGuards(OptionalJwtAuthGuard)
+  async searchPublishedPosts(
+    @Req() req: RequestWithUser,
+    @Query() query: GetPublishedPostsSearchQueryDto,
+  ): Promise<PaginatedPostsResponseDto> {
+    return this.postsService.searchPublishedPosts(query, req.user?.userId ?? null);
   }
 
   @Get(':postId')
