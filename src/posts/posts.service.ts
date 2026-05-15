@@ -1352,6 +1352,7 @@ export class PostsService {
             .limit(1),
         'post_requester_reaction_id',
       );
+      queryBuilder.setParameter('requesterUserId', _requesterUserId);
     }
 
     return queryBuilder;
