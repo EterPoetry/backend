@@ -574,7 +574,7 @@ export class CommentsService {
       .select('comment.post_comment_id', 'commentId')
       .addSelect('COUNT(commentReaction.comment_reaction_id)', 'likesCount')
       .groupBy('comment.post_comment_id')
-      .orderBy('likesCount', 'DESC')
+      .orderBy('COUNT(commentReaction.comment_reaction_id)', 'DESC')
       .addOrderBy('comment.post_comment_id', 'DESC');
 
     if (replyToCommentId === null) {
