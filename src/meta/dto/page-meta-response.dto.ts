@@ -10,6 +10,9 @@ export interface PageMetaResponse {
   audioFileUrl?: string;
   audioMimeType?: string;
   audioDurationSeconds?: number;
+  originAuthorName?: string;
+  authorName?: string;
+  textSnippet?: string;
 }
 
 export class PageMetaResponseDto implements PageMetaResponse {
@@ -39,4 +42,13 @@ export class PageMetaResponseDto implements PageMetaResponse {
 
   @ApiPropertyOptional()
   audioDurationSeconds?: number;
+
+  @ApiPropertyOptional()
+  originAuthorName?: string;
+
+  @ApiPropertyOptional()
+  authorName?: string;
+
+  @ApiPropertyOptional()
+  textSnippet?: string;
 }

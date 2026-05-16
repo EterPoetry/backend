@@ -49,19 +49,11 @@ export class MetaService {
       throw new NotFoundException({ message: 'Not found' });
     }
 
-    const authorName = this.firstNonEmpty(post.author?.name, post.originAuthorName, 'author');
-    const title = this.buildTitle(
-      post.title,
-      post.audioFileName,
-      `Post by ${authorName}`,
-      this.getDefaultMetaTitle(),
-    );
-    const description = this.buildDescription(
-      post.description,
-      post.text,
-      `Listen to this post on ${this.getSiteName()}`,
-      this.getDefaultMetaDescription(),
-    );
+    const authorName = this.normalizeMetaText(post.author?.name) || undefined;
+    const originAuthorName = this.normalizeMetaText(post.originAuthorName) || undefined;
+    const textSnippet = this.buildTextSnippet(post.text);
+    const title = this.buildPostTitle(post, originAuthorName, authorName);
+    const description = this.buildPostDescription(post, originAuthorName, authorName, textSnippet);
     const url = this.buildPublicUrl(`/posts/${post.postId}`);
     const audioFileUrl = this.resolveAudioFileUrl(post.audioFileName);
 
@@ -72,6 +64,9 @@ export class MetaService {
       url,
       canonical: url,
       type: 'article',
+      ...(originAuthorName ? { originAuthorName } : {}),
+      ...(authorName ? { authorName } : {}),
+      ...(textSnippet ? { textSnippet } : {}),
       ...(audioFileUrl
         ? {
             audioFileUrl,
@@ -135,6 +130,52 @@ export class MetaService {
       .find((candidate) => candidate.length > 0);
 
     return this.truncateMetaText(value || fallback, DEFAULT_DESCRIPTION_MAX_LENGTH);
+  }
+
+  private buildPostTitle(
+    post: Post,
+    originAuthorName?: string,
+    authorName?: string,
+  ): string {
+    return this.buildTitle(
+      post.title,
+      originAuthorName ? `Poem by ${originAuthorName}` : null,
+      authorName ? `Poem by ${authorName}` : null,
+      post.audioFileName,
+      this.getDefaultMetaTitle(),
+    );
+  }
+
+  private buildPostDescription(
+    post: Post,
+    originAuthorName?: string,
+    authorName?: string,
+    textSnippet?: string,
+  ): string {
+    const parts = [
+      this.normalizeMetaText(post.description),
+      originAuthorName ? `Original author: ${originAuthorName}.` : '',
+      !originAuthorName && authorName ? `Author: ${authorName}.` : '',
+      textSnippet ?? '',
+    ].filter((part) => part.length > 0);
+
+    if (parts.length === 0) {
+      return this.buildDescription(
+        `Listen to this post on ${this.getSiteName()}`,
+        this.getDefaultMetaDescription(),
+      );
+    }
+
+    return this.truncateMetaText(parts.join(' '), DEFAULT_DESCRIPTION_MAX_LENGTH);
+  }
+
+  private buildTextSnippet(value: string | null | undefined): string | undefined {
+    const normalizedValue = this.normalizeMetaText(value);
+    if (!normalizedValue) {
+      return undefined;
+    }
+
+    return this.truncateMetaText(normalizedValue, 140);
   }
 
   private normalizeMetaText(value: string | null | undefined): string {
@@ -254,11 +295,4 @@ export class MetaService {
     return firstOrigin || null;
   }
 
-  private firstNonEmpty(...values: Array<string | null | undefined>): string {
-    return (
-      values
-        .map((value) => this.normalizeMetaText(value))
-        .find((value) => value.length > 0) || ''
-    );
-  }
 }
