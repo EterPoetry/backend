@@ -1,6 +1,9 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+
+export const COMMENT_SORT_VALUES = ['newest', 'oldest', 'popular'] as const;
+export type CommentSort = (typeof COMMENT_SORT_VALUES)[number];
 
 export class GetPostCommentsQueryDto {
   @ApiPropertyOptional({
@@ -18,4 +21,14 @@ export class GetPostCommentsQueryDto {
   @Min(1)
   @Max(100)
   limit: number = 20;
+
+  @ApiPropertyOptional({
+    enum: COMMENT_SORT_VALUES,
+    default: 'newest',
+    description: 'Sort order for comments.',
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(COMMENT_SORT_VALUES)
+  sort: CommentSort = 'newest';
 }
