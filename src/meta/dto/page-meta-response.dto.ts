@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export interface PageMetaResponse {
   title: string;
@@ -7,6 +7,9 @@ export interface PageMetaResponse {
   url: string;
   canonical: string;
   type: 'article' | 'profile';
+  audioFileUrl?: string;
+  audioMimeType?: string;
+  audioDurationSeconds?: number;
 }
 
 export class PageMetaResponseDto implements PageMetaResponse {
@@ -27,4 +30,13 @@ export class PageMetaResponseDto implements PageMetaResponse {
 
   @ApiProperty({ enum: ['article', 'profile'] })
   type: 'article' | 'profile';
+
+  @ApiPropertyOptional()
+  audioFileUrl?: string;
+
+  @ApiPropertyOptional()
+  audioMimeType?: string;
+
+  @ApiPropertyOptional()
+  audioDurationSeconds?: number;
 }

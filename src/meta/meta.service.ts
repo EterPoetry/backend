@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import { extname } from 'path';
 import { Repository } from 'typeorm';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { Post } from '../posts/entities/post.entity';
@@ -12,6 +13,15 @@ const DEFAULT_SITE_NAME = 'Eter';
 const DEFAULT_META_DESCRIPTION_FALLBACK = 'Discover audio posts and profiles on Eter.';
 const DEFAULT_TITLE_MAX_LENGTH = 80;
 const DEFAULT_DESCRIPTION_MAX_LENGTH = 180;
+const AUDIO_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.ogg': 'audio/ogg',
+  '.opus': 'audio/opus',
+  '.flac': 'audio/flac',
+};
 
 @Injectable()
 export class MetaService {
@@ -53,6 +63,7 @@ export class MetaService {
       this.getDefaultMetaDescription(),
     );
     const url = this.buildPublicUrl(`/posts/${post.postId}`);
+    const audioFileUrl = this.resolveAudioFileUrl(post.audioFileName);
 
     return {
       title,
@@ -61,6 +72,17 @@ export class MetaService {
       url,
       canonical: url,
       type: 'article',
+      ...(audioFileUrl
+        ? {
+            audioFileUrl,
+            audioMimeType: this.resolveAudioMimeType(post.audioFileName),
+          }
+        : {}),
+      ...(typeof post.audioDurationSeconds === 'number'
+        ? {
+            audioDurationSeconds: post.audioDurationSeconds,
+          }
+        : {}),
     };
   }
 
@@ -144,15 +166,30 @@ export class MetaService {
     return `${publicSiteUrl}${normalizedValue.startsWith('/') ? '' : '/'}${normalizedValue}`;
   }
 
+  private resolveAudioFileUrl(audioFileName: string | null | undefined): string | undefined {
+    const audioUrl = audioFileName ? this.fileStorageService.getFileUrl(audioFileName) : null;
+    const normalizedAudioUrl = this.normalizeMetaText(audioUrl);
+    return normalizedAudioUrl || undefined;
+  }
+
+  private resolveAudioMimeType(audioFileName: string | null | undefined): string {
+    const extension = extname(audioFileName ?? '').toLowerCase();
+    return AUDIO_MIME_TYPE_BY_EXTENSION[extension] || 'audio/mpeg';
+  }
+
   private buildPublicUrl(path: string): string {
     const publicSiteUrl = this.getPublicSiteUrl();
     return `${publicSiteUrl}${path.startsWith('/') ? '' : '/'}${path}`;
   }
 
   private getPublicSiteUrl(): string {
-    return this.getTrimmedConfig('PUBLIC_SITE_URL')
-      || this.getTrimmedConfig('APP_BASE_URL')
-      || 'http://localhost:3000';
+    return (
+      this.getTrimmedConfig('PUBLIC_SITE_URL') ||
+      this.getOriginFromUrl(this.getTrimmedConfig('FRONTEND_AUTH_REDIRECT_URL')) ||
+      this.getFirstCorsOrigin() ||
+      this.getTrimmedConfig('APP_BASE_URL') ||
+      'http://localhost:3000'
+    );
   }
 
   private getSiteName(): string {
@@ -189,6 +226,32 @@ export class MetaService {
   private getTrimmedConfig(key: string): string | null {
     const value = this.configService.get<string>(key)?.trim();
     return value || null;
+  }
+
+  private getOriginFromUrl(value: string | null): string | null {
+    if (!value) {
+      return null;
+    }
+
+    try {
+      return new URL(value).origin;
+    } catch {
+      return null;
+    }
+  }
+
+  private getFirstCorsOrigin(): string | null {
+    const corsOrigin = this.getTrimmedConfig('CORS_ORIGIN');
+    if (!corsOrigin) {
+      return null;
+    }
+
+    const firstOrigin = corsOrigin
+      .split(',')
+      .map((origin) => origin.trim())
+      .find(Boolean);
+
+    return firstOrigin || null;
   }
 
   private firstNonEmpty(...values: Array<string | null | undefined>): string {
