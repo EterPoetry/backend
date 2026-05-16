@@ -3,7 +3,7 @@ import { ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { PageMetaResponseDto } from './dto/page-meta-response.dto';
 import { MetaService } from './meta.service';
 
-@Controller('api/meta')
+@Controller('meta')
 @ApiTags('Meta')
 export class MetaController {
   constructor(private readonly metaService: MetaService) {}
