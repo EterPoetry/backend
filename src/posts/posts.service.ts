@@ -868,6 +868,7 @@ export class PostsService {
     dto: UpdatePostDto,
   ): Promise<PostResponse> {
     const post = await this.requireOwnedPost(postId, requesterUserId);
+    const normalizedText = dto.text !== undefined ? this.normalizePostText(dto.text) : undefined;
 
     if (dto.title !== undefined) {
       post.title = dto.title;
@@ -877,8 +878,8 @@ export class PostsService {
       post.description = dto.description;
     }
 
-    if (dto.text !== undefined) {
-      post.text = dto.text;
+    if (normalizedText !== undefined) {
+      post.text = normalizedText;
     }
 
     if (dto.originAuthorName !== undefined) {
@@ -904,8 +905,8 @@ export class PostsService {
         updatePayload.description = dto.description;
       }
 
-      if (dto.text !== undefined) {
-        updatePayload.text = dto.text;
+      if (normalizedText !== undefined) {
+        updatePayload.text = normalizedText;
       }
 
       if (dto.originAuthorName !== undefined) {
@@ -920,8 +921,8 @@ export class PostsService {
         await this.syncPostCategories(manager, post.postId, dto.categoryIds);
       }
 
-      if (dto.text !== undefined) {
-        await this.removeOutdatedTextSynchronization(manager, post.postId, dto.text);
+      if (normalizedText !== undefined) {
+        await this.removeOutdatedTextSynchronization(manager, post.postId, normalizedText);
       }
 
       if (Object.keys(updatePayload).length > 0) {
@@ -1313,6 +1314,10 @@ export class PostsService {
     return typeof value === 'string' && value.trim().length > 0;
   }
 
+  private normalizePostText(value: string): string {
+    return value.replace(/(\r?\n)(?:[ \t]*(?:\r?\n))+/g, '$1$1');
+  }
+
   private getTrackDurationMs(audioDurationSeconds: number | null): number {
     if (!audioDurationSeconds || audioDurationSeconds <= 0) {
       throw new BadRequestException('Post audio duration is not available.');
@@ -1497,6 +1502,12 @@ export class PostsService {
       if (item.lineIndex >= lines.length) {
         throw new BadRequestException(
           `Text synchronization lineIndex ${item.lineIndex} does not exist in post text.`,
+        );
+      }
+
+      if (!this.hasNonEmptyValue(lines[item.lineIndex])) {
+        throw new BadRequestException(
+          `Text synchronization lineIndex ${item.lineIndex} points to an empty line.`,
         );
       }
 
