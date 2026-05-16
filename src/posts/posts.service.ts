@@ -25,6 +25,8 @@ import {
   MyPostsSortBy,
   SortOrder,
 } from './dto/get-my-posts-query.dto';
+import { GetFeedPostsQueryDto } from './dto/get-feed-posts-query.dto';
+import { GetLikedPostsQueryDto } from './dto/get-liked-posts-query.dto';
 import {
   GetPublishedPostsSearchQueryDto,
   PublishedPostsSearchSortBy,
@@ -91,6 +93,12 @@ export interface PaginatedPostsResponse {
   offset: number;
 }
 
+export interface FeedPostsResponse {
+  items: PostResponse[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface PopularPostsResponse {
   items: PostResponse[];
   snapshotId: number;
@@ -140,6 +148,11 @@ interface ListenSessionTokenPayload {
 
 interface PopularPostsCursorPayload {
   lastRank: number;
+}
+
+interface FeedPostsCursorPayload {
+  createdAt: string;
+  postId: number;
 }
 
 const LISTEN_COMPLETION_RATIO = 0.8;
@@ -250,6 +263,66 @@ export class PostsService {
     requesterUserId: number | null = authorId,
   ): Promise<PaginatedPostsResponse> {
     return this.getPostsByAuthor(authorId, query, requesterUserId);
+  }
+
+  async getFeedPosts(userId: number, query: GetFeedPostsQueryDto): Promise<FeedPostsResponse> {
+    const cursor = this.decodeFeedCursor(query.cursor);
+
+    const queryBuilder = this.createPostDetailsQueryBuilder(userId)
+      .where('post.status = :feedStatus', { feedStatus: PostStatus.PUBLISHED })
+      .andWhere(
+        `post.author_id IN (SELECT f.target_user_id FROM followers f WHERE f.follower_user_id = :feedUserId)`,
+        { feedUserId: userId },
+      );
+
+    if (cursor) {
+      queryBuilder.andWhere(
+        '(post.createdAt < :cursorCreatedAt OR (post.createdAt = :cursorCreatedAt AND post.postId < :cursorPostId))',
+        { cursorCreatedAt: cursor.createdAt, cursorPostId: cursor.postId },
+      );
+    }
+
+    queryBuilder
+      .orderBy('post.createdAt', 'DESC')
+      .addOrderBy('post.postId', 'DESC')
+      .distinct(true)
+      .take(query.limit + 1);
+
+    const posts = await this.getPostsWithComputedFields(queryBuilder);
+    const hasMore = posts.length > query.limit;
+    const pagePosts = hasMore ? posts.slice(0, query.limit) : posts;
+    const lastPost = pagePosts[pagePosts.length - 1];
+
+    return {
+      items: pagePosts.map((post) => this.buildPostResponse(post, { includeTextSynchronization: false })),
+      nextCursor:
+        hasMore && lastPost
+          ? this.encodeFeedCursor({ createdAt: lastPost.createdAt.toISOString(), postId: lastPost.postId })
+          : null,
+      hasMore,
+    };
+  }
+
+  async getLikedPosts(userId: number, query: GetLikedPostsQueryDto): Promise<PaginatedPostsResponse> {
+    const queryBuilder = this.createPostDetailsQueryBuilder(userId)
+      .where('post.status = :likedFeedStatus', { likedFeedStatus: PostStatus.PUBLISHED })
+      .andWhere(
+        `EXISTS (SELECT 1 FROM post_reactions pr WHERE pr.post_id = post.post_id AND pr.user_id = :likedByUserId AND pr.reaction_type = :reactionType)`,
+        { likedByUserId: userId },
+      )
+      .orderBy('post.createdAt', 'DESC')
+      .addOrderBy('post.postId', 'DESC')
+      .distinct(true)
+      .skip(query.offset)
+      .take(query.limit);
+
+    const { posts, total } = await this.getPostsWithComputedFieldsAndCount(queryBuilder);
+
+    return {
+      items: posts.map((post) => this.buildPostResponse(post, { includeTextSynchronization: false })),
+      total,
+      offset: query.offset,
+    };
   }
 
   async getPublishedPostsByAuthor(
@@ -832,6 +905,29 @@ export class PostsService {
       return parsed;
     } catch {
       throw new BadRequestException('Popular posts cursor is invalid.');
+    }
+  }
+
+  private encodeFeedCursor(payload: FeedPostsCursorPayload): string {
+    return Buffer.from(JSON.stringify(payload)).toString('base64url');
+  }
+
+  private decodeFeedCursor(cursor?: string): FeedPostsCursorPayload | null {
+    if (!cursor) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as
+        | FeedPostsCursorPayload
+        | null;
+      if (!parsed || typeof parsed.createdAt !== 'string' || !Number.isInteger(parsed.postId)) {
+        throw new Error('Invalid feed cursor payload.');
+      }
+
+      return parsed;
+    } catch {
+      throw new BadRequestException('Feed cursor is invalid.');
     }
   }
 

@@ -42,6 +42,8 @@ import { PostStatus } from '../common/enums/post-status.enum';
 import { GetCategoriesQueryDto } from './dto/get-categories-query.dto';
 import { EndPostListenDto } from './dto/end-post-listen.dto';
 import { GetMyPostsQueryDto } from './dto/get-my-posts-query.dto';
+import { GetFeedPostsQueryDto } from './dto/get-feed-posts-query.dto';
+import { GetLikedPostsQueryDto } from './dto/get-liked-posts-query.dto';
 import { GetPublishedPostsSearchQueryDto } from './dto/get-published-posts-search-query.dto';
 import { GetPopularPostsQueryDto } from './dto/get-popular-posts-query.dto';
 import { StartPostListenDto } from './dto/start-post-listen.dto';
@@ -51,6 +53,7 @@ import { UpdatePostDto } from './dto/update-post.dto';
 import {
   CategoryResponse,
   EndPostListenResponse,
+  FeedPostsResponse,
   PaginatedPostsResponse,
   PopularPostsResponse,
   PostAuthorProfileResponse,
@@ -251,6 +254,17 @@ class PaginatedPostsResponseDto implements PaginatedPostsResponse {
   offset: number;
 }
 
+class FeedPostsResponseDto implements FeedPostsResponse {
+  @ApiProperty({ type: [PostResponseDto] })
+  items: PostResponseDto[];
+
+  @ApiPropertyOptional({ nullable: true })
+  nextCursor: string | null;
+
+  @ApiProperty()
+  hasMore: boolean;
+}
+
 class PopularPostsResponseDto implements PopularPostsResponse {
   @ApiProperty({ type: [PostResponseDto] })
   items: PostResponseDto[];
@@ -446,6 +460,26 @@ export class PostsController {
   ): Promise<PaginatedPostsResponseDto> {
     const userId = this.requireUser(req).userId;
     return this.postsService.getMyPosts(userId, query, userId);
+  }
+
+  @Get('feed')
+  @UseGuards(JwtAuthGuard)
+  async getFeedPosts(
+    @Req() req: RequestWithUser,
+    @Query() query: GetFeedPostsQueryDto,
+  ): Promise<FeedPostsResponseDto> {
+    const userId = this.requireUser(req).userId;
+    return this.postsService.getFeedPosts(userId, query);
+  }
+
+  @Get('liked')
+  @UseGuards(JwtAuthGuard)
+  async getLikedPosts(
+    @Req() req: RequestWithUser,
+    @Query() query: GetLikedPostsQueryDto,
+  ): Promise<PaginatedPostsResponseDto> {
+    const userId = this.requireUser(req).userId;
+    return this.postsService.getLikedPosts(userId, query);
   }
 
   @Get('categories')
