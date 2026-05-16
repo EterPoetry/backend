@@ -18,6 +18,7 @@ import { PublicConfigModule } from './public-config/public-config.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ENTITIES } from './database/entities';
 import { MetaModule } from './meta/meta.module';
+import { SitemapModule } from './sitemap/sitemap.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { MetaModule } from './meta/meta.module';
     PublicConfigModule,
     PaymentsModule,
     MetaModule,
+    SitemapModule,
   ],
 })
 export class AppModule {}
