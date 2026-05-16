@@ -5,6 +5,11 @@ import { Repository } from 'typeorm';
 import { Post } from '../posts/entities/post.entity';
 import { User } from '../users/entities/user.entity';
 import { PostStatus } from '../common/enums/post-status.enum';
+import { SitemapCache } from './sitemap.cache';
+
+const TTL_INDEX = 300;
+const TTL_RECENT = 300;
+const TTL_SHARD = 86400;
 
 @Injectable()
 export class SitemapService {
@@ -14,12 +19,36 @@ export class SitemapService {
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly sitemapCache: SitemapCache,
     @InjectRepository(Post) private readonly postRepository: Repository<Post>,
     @InjectRepository(User) private readonly userRepository: Repository<User>,
   ) {
     this.siteUrl = configService.get<string>('PUBLIC_SITE_URL', 'https://eter.pp.ua').replace(/\/$/, '');
     this.shardSize = Number(configService.get<string>('SITEMAP_SHARD_SIZE', '50000'));
     this.recentPostsCount = Number(configService.get<string>('SITEMAP_RECENT_POSTS_COUNT', '5000'));
+  }
+
+  generateSitemapIndex(): Promise<string> {
+    return this.sitemapCache.getOrSet('sitemap:index', TTL_INDEX, () => this.buildSitemapIndex());
+  }
+
+  generateRecentPostsSitemap(): Promise<string> {
+    return this.sitemapCache.getOrSet('sitemap:recent-posts', TTL_RECENT, () => this.buildRecentPostsSitemap());
+  }
+
+  generatePostsSitemap(shard: number): Promise<string> {
+    return this.sitemapCache.getOrSet(`sitemap:posts:${shard}`, TTL_SHARD, () => this.buildPostsSitemap(shard));
+  }
+
+  generateUsersSitemap(shard: number): Promise<string> {
+    return this.sitemapCache.getOrSet(`sitemap:users:${shard}`, TTL_SHARD, () => this.buildUsersSitemap(shard));
+  }
+
+  // Truncates a date to a multiple of ttlSeconds so all processes within the same
+  // cache window produce identical timestamps → identical ETag → single Cloudflare entry.
+  private truncateToTtl(date: Date, ttlSeconds: number): Date {
+    const ms = ttlSeconds * 1000;
+    return new Date(Math.floor(date.getTime() / ms) * ms);
   }
 
   private escapeXml(value: string): string {
@@ -31,43 +60,47 @@ export class SitemapService {
       .replace(/'/g, '&apos;');
   }
 
-  async generateSitemapIndex(): Promise<string> {
+  private async buildSitemapIndex(): Promise<string> {
+    const TTL = TTL_INDEX;
+
     const [postShardStats, userShardStats, recentLastmod] = await Promise.all([
       this.getPostShardStats(),
       this.getUserShardStats(),
       this.getRecentPostsLastmod(),
     ]);
 
+    const stable = (date: Date) => this.truncateToTtl(date, TTL).toISOString();
+
     const entries: string[] = [];
 
     entries.push(
       this.buildSitemapIndexEntry(
         `${this.siteUrl}/sitemaps/recent-posts.xml`,
-        (recentLastmod ?? new Date()).toISOString(),
+        stable(recentLastmod ?? new Date()),
       ),
     );
 
     if (postShardStats.length === 0) {
-      entries.push(this.buildSitemapIndexEntry(`${this.siteUrl}/sitemaps/posts-0.xml`, new Date().toISOString()));
+      entries.push(this.buildSitemapIndexEntry(`${this.siteUrl}/sitemaps/posts-0.xml`, stable(new Date())));
     } else {
       for (const stat of postShardStats) {
         entries.push(
           this.buildSitemapIndexEntry(
             `${this.siteUrl}/sitemaps/posts-${Number(stat.shard_num)}.xml`,
-            new Date(stat.max_updated).toISOString(),
+            stable(new Date(stat.max_updated)),
           ),
         );
       }
     }
 
     if (userShardStats.length === 0) {
-      entries.push(this.buildSitemapIndexEntry(`${this.siteUrl}/sitemaps/users-0.xml`, new Date().toISOString()));
+      entries.push(this.buildSitemapIndexEntry(`${this.siteUrl}/sitemaps/users-0.xml`, stable(new Date())));
     } else {
       for (const stat of userShardStats) {
         entries.push(
           this.buildSitemapIndexEntry(
             `${this.siteUrl}/sitemaps/users-${Number(stat.shard_num)}.xml`,
-            new Date(stat.max_updated).toISOString(),
+            stable(new Date(stat.max_updated)),
           ),
         );
       }
@@ -125,7 +158,7 @@ export class SitemapService {
     return val ? new Date(val) : null;
   }
 
-  async generatePostsSitemap(shard: number): Promise<string> {
+  private async buildPostsSitemap(shard: number): Promise<string> {
     if (!Number.isFinite(shard) || shard < 0) {
       return this.wrapUrlset([]);
     }
@@ -149,7 +182,7 @@ export class SitemapService {
     return this.wrapUrlset(entries);
   }
 
-  async generateUsersSitemap(shard: number): Promise<string> {
+  private async buildUsersSitemap(shard: number): Promise<string> {
     if (!Number.isFinite(shard) || shard < 0) {
       return this.wrapUrlset([]);
     }
@@ -172,7 +205,7 @@ export class SitemapService {
     return this.wrapUrlset(entries);
   }
 
-  async generateRecentPostsSitemap(): Promise<string> {
+  private async buildRecentPostsSitemap(): Promise<string> {
     const posts = await this.postRepository
       .createQueryBuilder('post')
       .select(['post.postId', 'post.updatedAt'])
