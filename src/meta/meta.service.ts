@@ -68,7 +68,7 @@ export class MetaService {
     return {
       title,
       description,
-      image: this.resolveImage(post.author?.photo ? this.fileStorageService.getFileUrl(post.author.photo) : null),
+      image: this.getDefaultShareImageUrl(),
       url,
       canonical: url,
       type: 'article',
