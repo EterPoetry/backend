@@ -52,6 +52,10 @@ export class MetaService {
     const authorName = this.normalizeMetaText(post.author?.name) || undefined;
     const originAuthorName = this.normalizeMetaText(post.originAuthorName) || undefined;
     const textSnippet = this.buildTextSnippet(post.text);
+    const contentTitle = this.buildPostContentTitle(post, originAuthorName, authorName);
+    const contentDescription = this.normalizeMetaText(post.description) || undefined;
+    const poemParagraphs = this.buildPoemParagraphs(post.text);
+    const poemText = poemParagraphs?.join('\n\n');
     const title = this.buildPostTitle(post, originAuthorName, authorName);
     const description = this.buildPostDescription(post, originAuthorName, authorName, textSnippet);
     const url = this.buildPublicUrl(`/posts/${post.postId}`);
@@ -67,6 +71,10 @@ export class MetaService {
       ...(originAuthorName ? { originAuthorName } : {}),
       ...(authorName ? { authorName } : {}),
       ...(textSnippet ? { textSnippet } : {}),
+      ...(contentTitle ? { contentTitle } : {}),
+      ...(contentDescription ? { contentDescription } : {}),
+      ...(poemText ? { poemText } : {}),
+      ...(poemParagraphs?.length ? { poemParagraphs } : {}),
       ...(audioFileUrl
         ? {
             audioFileUrl,
@@ -146,6 +154,20 @@ export class MetaService {
     );
   }
 
+  private buildPostContentTitle(
+    post: Post,
+    originAuthorName?: string,
+    authorName?: string,
+  ): string {
+    return this.buildTitle(
+      post.title,
+      post.audioFileName,
+      originAuthorName ? `Poem by ${originAuthorName}` : null,
+      authorName ? `Poem by ${authorName}` : null,
+      this.getDefaultMetaTitle(),
+    );
+  }
+
   private buildPostDescription(
     post: Post,
     originAuthorName?: string,
@@ -176,6 +198,20 @@ export class MetaService {
     }
 
     return this.truncateMetaText(normalizedValue, 140);
+  }
+
+  private buildPoemParagraphs(value: string | null | undefined): string[] | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const paragraphs = value
+      .replace(/\r\n/g, '\n')
+      .split(/\n{2,}/)
+      .map((paragraph) => this.normalizeMetaText(paragraph))
+      .filter((paragraph) => paragraph.length > 0);
+
+    return paragraphs.length ? paragraphs : undefined;
   }
 
   private normalizeMetaText(value: string | null | undefined): string {

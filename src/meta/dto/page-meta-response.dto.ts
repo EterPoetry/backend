@@ -13,6 +13,10 @@ export interface PageMetaResponse {
   originAuthorName?: string;
   authorName?: string;
   textSnippet?: string;
+  contentTitle?: string;
+  contentDescription?: string;
+  poemText?: string;
+  poemParagraphs?: string[];
 }
 
 export class PageMetaResponseDto implements PageMetaResponse {
@@ -51,4 +55,16 @@ export class PageMetaResponseDto implements PageMetaResponse {
 
   @ApiPropertyOptional()
   textSnippet?: string;
+
+  @ApiPropertyOptional()
+  contentTitle?: string;
+
+  @ApiPropertyOptional()
+  contentDescription?: string;
+
+  @ApiPropertyOptional()
+  poemText?: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  poemParagraphs?: string[];
 }
