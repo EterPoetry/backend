@@ -75,6 +75,7 @@ export class MetaService {
       ...(contentDescription ? { contentDescription } : {}),
       ...(poemText ? { poemText } : {}),
       ...(poemParagraphs?.length ? { poemParagraphs } : {}),
+      ...(post.createdAt ? { publishedTime: post.createdAt.toISOString() } : {}),
       ...(audioFileUrl
         ? {
             audioFileUrl,

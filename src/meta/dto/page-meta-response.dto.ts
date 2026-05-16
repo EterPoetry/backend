@@ -17,6 +17,7 @@ export interface PageMetaResponse {
   contentDescription?: string;
   poemText?: string;
   poemParagraphs?: string[];
+  publishedTime?: string;
 }
 
 export class PageMetaResponseDto implements PageMetaResponse {
@@ -67,4 +68,7 @@ export class PageMetaResponseDto implements PageMetaResponse {
 
   @ApiPropertyOptional({ type: [String] })
   poemParagraphs?: string[];
+
+  @ApiPropertyOptional()
+  publishedTime?: string;
 }
