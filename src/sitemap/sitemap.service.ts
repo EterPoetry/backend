@@ -32,29 +32,97 @@ export class SitemapService {
   }
 
   async generateSitemapIndex(): Promise<string> {
-    const now = new Date().toISOString();
-
-    const [postCount, userCount] = await Promise.all([
-      this.postRepository.count({ where: { status: PostStatus.PUBLISHED } }),
-      this.userRepository.count(),
+    const [postShardStats, userShardStats, recentLastmod] = await Promise.all([
+      this.getPostShardStats(),
+      this.getUserShardStats(),
+      this.getRecentPostsLastmod(),
     ]);
-
-    const postShards = Math.ceil(postCount / this.shardSize) || 1;
-    const userShards = Math.ceil(userCount / this.shardSize) || 1;
 
     const entries: string[] = [];
 
-    entries.push(this.buildSitemapIndexEntry(`${this.siteUrl}/sitemaps/recent-posts.xml`, now));
+    entries.push(
+      this.buildSitemapIndexEntry(
+        `${this.siteUrl}/sitemaps/recent-posts.xml`,
+        (recentLastmod ?? new Date()).toISOString(),
+      ),
+    );
 
-    for (let i = 0; i < postShards; i++) {
-      entries.push(this.buildSitemapIndexEntry(`${this.siteUrl}/sitemaps/posts-${i}.xml`, now));
+    if (postShardStats.length === 0) {
+      entries.push(this.buildSitemapIndexEntry(`${this.siteUrl}/sitemaps/posts-0.xml`, new Date().toISOString()));
+    } else {
+      for (const stat of postShardStats) {
+        entries.push(
+          this.buildSitemapIndexEntry(
+            `${this.siteUrl}/sitemaps/posts-${Number(stat.shard_num)}.xml`,
+            new Date(stat.max_updated).toISOString(),
+          ),
+        );
+      }
     }
 
-    for (let i = 0; i < userShards; i++) {
-      entries.push(this.buildSitemapIndexEntry(`${this.siteUrl}/sitemaps/users-${i}.xml`, now));
+    if (userShardStats.length === 0) {
+      entries.push(this.buildSitemapIndexEntry(`${this.siteUrl}/sitemaps/users-0.xml`, new Date().toISOString()));
+    } else {
+      for (const stat of userShardStats) {
+        entries.push(
+          this.buildSitemapIndexEntry(
+            `${this.siteUrl}/sitemaps/users-${Number(stat.shard_num)}.xml`,
+            new Date(stat.max_updated).toISOString(),
+          ),
+        );
+      }
     }
 
     return this.wrapSitemapIndex(entries.join('\n'));
+  }
+
+  private async getPostShardStats(): Promise<Array<{ shard_num: string; max_updated: string }>> {
+    return this.postRepository.query(
+      `
+      SELECT
+        floor((rn - 1) / $1::int) AS shard_num,
+        MAX(updated_at)            AS max_updated
+      FROM (
+        SELECT updated_at, ROW_NUMBER() OVER (ORDER BY post_id ASC) AS rn
+        FROM posts
+        WHERE status = $2
+      ) sub
+      GROUP BY shard_num
+      ORDER BY shard_num
+      `,
+      [this.shardSize, PostStatus.PUBLISHED],
+    );
+  }
+
+  private async getUserShardStats(): Promise<Array<{ shard_num: string; max_updated: string }>> {
+    return this.userRepository.query(
+      `
+      SELECT
+        floor((rn - 1) / $1::int) AS shard_num,
+        MAX(created_at)            AS max_updated
+      FROM (
+        SELECT created_at, ROW_NUMBER() OVER (ORDER BY user_id ASC) AS rn
+        FROM users
+      ) sub
+      GROUP BY shard_num
+      ORDER BY shard_num
+      `,
+      [this.shardSize],
+    );
+  }
+
+  private async getRecentPostsLastmod(): Promise<Date | null> {
+    const rows: Array<{ max_updated: string | null }> = await this.postRepository.query(
+      `
+      SELECT MAX(updated_at) AS max_updated
+      FROM (
+        SELECT updated_at FROM posts WHERE status = $1 ORDER BY post_id DESC LIMIT $2
+      ) sub
+      `,
+      [PostStatus.PUBLISHED, this.recentPostsCount],
+    );
+    const val = rows[0]?.max_updated;
+    return val ? new Date(val) : null;
   }
 
   async generatePostsSitemap(shard: number): Promise<string> {
