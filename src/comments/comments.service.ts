@@ -1,6 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { FileStorageService } from '../storage/file-storage.service';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
@@ -8,7 +13,9 @@ import { Post } from '../posts/entities/post.entity';
 import { CommentReaction } from '../reactions/entities/comment-reaction.entity';
 import { PostComment } from './entities/post-comment.entity';
 import { CreateCommentDto } from './dto/create-comment.dto';
-import { GetPostCommentsQueryDto } from './dto/get-post-comments-query.dto';
+import { CommentSort, GetPostCommentsQueryDto } from './dto/get-post-comments-query.dto';
+import { PopularCommentSnapshot } from './entities/popular-comment-snapshot.entity';
+import { PopularCommentSnapshotItem } from './entities/popular-comment-snapshot-item.entity';
 
 export interface CommentAuthorResponse {
   userId: number;
@@ -42,15 +49,29 @@ export interface CommentLikeMutationResponse {
   likesCount: number;
 }
 
+interface PopularCommentsCursorPayload {
+  snapshotId: number;
+  lastRank: number;
+}
+
+const POPULAR_COMMENTS_SNAPSHOT_REFRESH_MINUTES = 5;
+const POPULAR_COMMENTS_SNAPSHOT_RETENTION_HOURS = 1;
+
 @Injectable()
 export class CommentsService {
   constructor(
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     @InjectRepository(PostComment)
     private readonly commentsRepository: Repository<PostComment>,
     @InjectRepository(CommentReaction)
     private readonly commentReactionsRepository: Repository<CommentReaction>,
     @InjectRepository(Post)
     private readonly postsRepository: Repository<Post>,
+    @InjectRepository(PopularCommentSnapshot)
+    private readonly popularCommentSnapshotsRepository: Repository<PopularCommentSnapshot>,
+    @InjectRepository(PopularCommentSnapshotItem)
+    private readonly popularCommentSnapshotItemsRepository: Repository<PopularCommentSnapshotItem>,
     private readonly fileStorageService: FileStorageService,
   ) {}
 
@@ -61,6 +82,10 @@ export class CommentsService {
   ): Promise<PaginatedCommentsResponse> {
     await this.requirePublishedPost(postId);
 
+    if (query.sort === 'popular') {
+      return this.getPopularCommentsPage(postId, requesterUserId, query, null);
+    }
+
     const total = await this.commentsRepository.count({
       where: {
         postId,
@@ -69,16 +94,11 @@ export class CommentsService {
     });
 
     const queryBuilder = this.createTopLevelCommentsQuery(postId, requesterUserId)
-      .andWhere('comment.reply_to_comment_id IS NULL')
-      .orderBy('comment.post_comment_id', 'DESC');
-
-    const cursorCommentId = this.parseNumericCursor(query.cursor);
-    if (cursorCommentId !== null) {
-      queryBuilder.andWhere('comment.post_comment_id < :cursorCommentId', { cursorCommentId });
-    }
+      .andWhere('comment.reply_to_comment_id IS NULL');
+    this.applyRegularCommentSort(queryBuilder, query.sort, query.cursor);
 
     const rows = await queryBuilder.limit(query.limit + 1).getRawMany<CommentRow>();
-    const { pageRows, nextCursor, hasMore } = this.buildCommentsPage(rows, query.limit);
+    const { pageRows, nextCursor, hasMore } = this.buildRegularCommentsPage(rows, query.limit);
 
     return {
       items: pageRows.map((row) => this.mapCommentRow(row)),
@@ -100,6 +120,7 @@ export class CommentsService {
       throw new BadRequestException('Replies can only be requested for top-level comments.');
     }
 
+    const sort: CommentSort = 'oldest';
     const total = await this.commentsRepository.count({
       where: {
         replyToCommentId: parentComment.postCommentId,
@@ -107,16 +128,11 @@ export class CommentsService {
     });
 
     const queryBuilder = this.createCommentsBaseQuery(parentComment.postId, requesterUserId)
-      .andWhere('comment.reply_to_comment_id = :commentId', { commentId: parentComment.postCommentId })
-      .orderBy('comment.post_comment_id', 'ASC');
-
-    const cursorCommentId = this.parseNumericCursor(query.cursor);
-    if (cursorCommentId !== null) {
-      queryBuilder.andWhere('comment.post_comment_id > :cursorCommentId', { cursorCommentId });
-    }
+      .andWhere('comment.reply_to_comment_id = :commentId', { commentId: parentComment.postCommentId });
+    this.applyRegularCommentSort(queryBuilder, sort, query.cursor);
 
     const rows = await queryBuilder.limit(query.limit + 1).getRawMany<CommentRow>();
-    const { pageRows, nextCursor, hasMore } = this.buildCommentsPage(rows, query.limit);
+    const { pageRows, nextCursor, hasMore } = this.buildRegularCommentsPage(rows, query.limit);
 
     return {
       items: pageRows.map((row) => this.mapCommentRow(row)),
@@ -289,7 +305,7 @@ export class CommentsService {
     }, 'replies_count');
   }
 
-  private buildCommentsPage(rows: CommentRow[], limit: number) {
+  private buildRegularCommentsPage(rows: CommentRow[], limit: number) {
     const hasMore = rows.length > limit;
     const pageRows = hasMore ? rows.slice(0, limit) : rows;
     const lastRow = pageRows.at(-1);
@@ -298,6 +314,89 @@ export class CommentsService {
       pageRows,
       hasMore,
       nextCursor: hasMore && lastRow ? String(lastRow.comment_id) : null,
+    };
+  }
+
+  private applyRegularCommentSort(
+    queryBuilder: ReturnType<CommentsService['createCommentsBaseQuery']>,
+    sort: CommentSort,
+    cursor?: string,
+  ): void {
+    const cursorCommentId = this.parseNumericCursor(cursor);
+    const isOldestFirst = sort === 'oldest';
+
+    queryBuilder.orderBy('comment.post_comment_id', isOldestFirst ? 'ASC' : 'DESC');
+
+    if (cursorCommentId === null) {
+      return;
+    }
+
+    queryBuilder.andWhere(
+      `comment.post_comment_id ${isOldestFirst ? '>' : '<'} :cursorCommentId`,
+      { cursorCommentId },
+    );
+  }
+
+  private async getPopularCommentsPage(
+    postId: number,
+    requesterUserId: number | null,
+    query: GetPostCommentsQueryDto,
+    replyToCommentId: number | null,
+  ): Promise<PaginatedCommentsResponse> {
+    const snapshot = query.cursor
+      ? await this.getPinnedPopularCommentsSnapshot(query.cursor, postId, replyToCommentId)
+      : await this.getLatestPopularCommentsSnapshot(postId, replyToCommentId);
+
+    const cursor = this.decodePopularCommentsCursor(query.cursor);
+    const rankedRows = await this.popularCommentSnapshotItemsRepository
+      .createQueryBuilder('snapshotItem')
+      .innerJoin(
+        'post_comments',
+        'comment',
+        'comment.post_comment_id = snapshotItem.comment_id AND comment.post_id = :postId',
+        { postId },
+      )
+      .where('snapshotItem.snapshot_id = :snapshotId', { snapshotId: snapshot.snapshotId })
+      .andWhere('snapshotItem.rank > :lastRank', { lastRank: cursor?.lastRank ?? 0 })
+      .orderBy('snapshotItem.rank', 'ASC')
+      .limit(query.limit + 1)
+      .select('snapshotItem.comment_id', 'commentId')
+      .addSelect('snapshotItem.rank', 'rank')
+      .getRawMany<{ commentId: string; rank: string }>();
+
+    const hasMore = rankedRows.length > query.limit;
+    const pageRows = hasMore ? rankedRows.slice(0, query.limit) : rankedRows;
+    const commentIds = pageRows.map((row) => Number(row.commentId));
+
+    if (!commentIds.length) {
+      return {
+        items: [],
+        total: snapshot.totalComments,
+        limit: query.limit,
+        nextCursor: null,
+        hasMore: false,
+      };
+    }
+
+    const items = replyToCommentId === null
+      ? await this.getTopLevelCommentsByIds(postId, requesterUserId, commentIds)
+      : await this.getReplyCommentsByIds(postId, requesterUserId, replyToCommentId, commentIds);
+    const itemsById = new Map(items.map((item) => [item.commentId, item]));
+    const lastRank = Number(pageRows[pageRows.length - 1].rank);
+
+    return {
+      items: commentIds
+        .map((commentId) => itemsById.get(commentId))
+        .filter((item): item is CommentResponse => Boolean(item)),
+      total: snapshot.totalComments,
+      limit: query.limit,
+      nextCursor: hasMore
+        ? this.encodePopularCommentsCursor({
+            snapshotId: snapshot.snapshotId,
+            lastRank,
+          })
+        : null,
+      hasMore,
     };
   }
 
@@ -312,6 +411,226 @@ export class CommentsService {
     }
 
     return value;
+  }
+
+  private parsePopularCursor(cursor?: string): PopularCommentsCursorPayload | null {
+    if (!cursor) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as
+        | PopularCommentsCursorPayload
+        | null;
+
+      if (
+        !parsed ||
+        !Number.isInteger(parsed.snapshotId) ||
+        parsed.snapshotId <= 0 ||
+        !Number.isInteger(parsed.lastRank) ||
+        parsed.lastRank < 0
+      ) {
+        throw new Error('Invalid popular comments cursor payload.');
+      }
+
+      return parsed;
+    } catch {
+      throw new BadRequestException('Cursor is invalid for popular comments sorting.');
+    }
+  }
+
+  private decodePopularCommentsCursor(cursor?: string): PopularCommentsCursorPayload | null {
+    return this.parsePopularCursor(cursor);
+  }
+
+  private encodePopularCommentsCursor(payload: PopularCommentsCursorPayload): string {
+    return Buffer.from(JSON.stringify(payload)).toString('base64url');
+  }
+
+  private async getPinnedPopularCommentsSnapshot(
+    cursor: string,
+    postId: number,
+    replyToCommentId: number | null,
+  ): Promise<PopularCommentSnapshot> {
+    const decoded = this.decodePopularCommentsCursor(cursor);
+    if (!decoded) {
+      throw new BadRequestException('Popular comments cursor is missing.');
+    }
+
+    const snapshot = await this.createPopularCommentsSnapshotsScopeQuery(
+      this.popularCommentSnapshotsRepository,
+      postId,
+      replyToCommentId,
+    )
+      .andWhere('snapshot.snapshot_id = :snapshotId', { snapshotId: decoded.snapshotId })
+      .getOne();
+
+    if (!snapshot || snapshot.expiresAt.getTime() <= Date.now()) {
+      throw new ConflictException({
+        message: 'Popular comments snapshot expired. Reload comments.',
+        errorCode: 'POPULAR_COMMENTS_SNAPSHOT_EXPIRED',
+      });
+    }
+
+    return snapshot;
+  }
+
+  private async getLatestPopularCommentsSnapshot(
+    postId: number,
+    replyToCommentId: number | null,
+  ): Promise<PopularCommentSnapshot> {
+    const latestSnapshot = await this.createPopularCommentsSnapshotsScopeQuery(
+      this.popularCommentSnapshotsRepository,
+      postId,
+      replyToCommentId,
+    )
+      .orderBy('snapshot.generated_at', 'DESC')
+      .getOne();
+
+    if (latestSnapshot && this.isPopularCommentsSnapshotFresh(latestSnapshot)) {
+      return latestSnapshot;
+    }
+
+    return this.createPopularCommentsSnapshot(postId, replyToCommentId);
+  }
+
+  private isPopularCommentsSnapshotFresh(snapshot: PopularCommentSnapshot): boolean {
+    const refreshWindowMs = POPULAR_COMMENTS_SNAPSHOT_REFRESH_MINUTES * 60 * 1000;
+    return Date.now() - snapshot.generatedAt.getTime() < refreshWindowMs;
+  }
+
+  private async createPopularCommentsSnapshot(
+    postId: number,
+    replyToCommentId: number | null,
+  ): Promise<PopularCommentSnapshot> {
+    return this.dataSource.transaction(async (manager) => {
+      const snapshotsRepository = manager.getRepository(PopularCommentSnapshot);
+      const snapshotItemsRepository = manager.getRepository(PopularCommentSnapshotItem);
+
+      const latestSnapshot = await this.createPopularCommentsSnapshotsScopeQuery(
+        snapshotsRepository,
+        postId,
+        replyToCommentId,
+      )
+        .orderBy('snapshot.generated_at', 'DESC')
+        .getOne();
+
+      if (latestSnapshot && this.isPopularCommentsSnapshotFresh(latestSnapshot)) {
+        return latestSnapshot;
+      }
+
+      const rankedRows = await this.getRankedCommentsForSnapshot(manager, postId, replyToCommentId);
+      const now = new Date();
+      const expiresAt = new Date(
+        now.getTime() + POPULAR_COMMENTS_SNAPSHOT_RETENTION_HOURS * 60 * 60 * 1000,
+      );
+      const snapshot = await snapshotsRepository.save(
+        snapshotsRepository.create({
+          postId,
+          replyToCommentId,
+          generatedAt: now,
+          expiresAt,
+          totalComments: rankedRows.length,
+        }),
+      );
+
+      if (rankedRows.length) {
+        await snapshotItemsRepository.save(
+          rankedRows.map((row, index) =>
+            snapshotItemsRepository.create({
+              snapshotId: snapshot.snapshotId,
+              commentId: Number(row.commentId),
+              rank: index + 1,
+              likesCount: Number(row.likesCount),
+            }),
+          ),
+        );
+      }
+
+      await snapshotsRepository
+        .createQueryBuilder()
+        .delete()
+        .where('expires_at <= NOW()')
+        .execute();
+
+      return snapshot;
+    });
+  }
+
+  private getRankedCommentsForSnapshot(
+    manager: EntityManager,
+    postId: number,
+    replyToCommentId: number | null,
+  ) {
+    const queryBuilder = manager
+      .getRepository(PostComment)
+      .createQueryBuilder('comment')
+      .leftJoin(
+        'comment_reactions',
+        'commentReaction',
+        'commentReaction.post_comment_id = comment.post_comment_id',
+      )
+      .where('comment.post_id = :postId', { postId })
+      .select('comment.post_comment_id', 'commentId')
+      .addSelect('COUNT(commentReaction.comment_reaction_id)', 'likesCount')
+      .groupBy('comment.post_comment_id')
+      .orderBy('likesCount', 'DESC')
+      .addOrderBy('comment.post_comment_id', 'DESC');
+
+    if (replyToCommentId === null) {
+      queryBuilder.andWhere('comment.reply_to_comment_id IS NULL');
+    } else {
+      queryBuilder.andWhere('comment.reply_to_comment_id = :replyToCommentId', { replyToCommentId });
+    }
+
+    return queryBuilder.getRawMany<{ commentId: string; likesCount: string }>();
+  }
+
+  private async getTopLevelCommentsByIds(
+    postId: number,
+    requesterUserId: number | null,
+    commentIds: number[],
+  ): Promise<CommentResponse[]> {
+    const rows = await this.createTopLevelCommentsQuery(postId, requesterUserId)
+      .andWhere('comment.reply_to_comment_id IS NULL')
+      .andWhere('comment.post_comment_id IN (:...commentIds)', { commentIds })
+      .getRawMany<CommentRow>();
+
+    return rows.map((row) => this.mapCommentRow(row));
+  }
+
+  private createPopularCommentsSnapshotsScopeQuery(
+    repository: Repository<PopularCommentSnapshot>,
+    postId: number,
+    replyToCommentId: number | null,
+  ) {
+    const queryBuilder = repository
+      .createQueryBuilder('snapshot')
+      .where('snapshot.post_id = :postId', { postId });
+
+    if (replyToCommentId === null) {
+      queryBuilder.andWhere('snapshot.reply_to_comment_id IS NULL');
+    } else {
+      queryBuilder.andWhere('snapshot.reply_to_comment_id = :replyToCommentId', {
+        replyToCommentId,
+      });
+    }
+
+    return queryBuilder;
+  }
+
+  private async getReplyCommentsByIds(
+    postId: number,
+    requesterUserId: number | null,
+    replyToCommentId: number,
+    commentIds: number[],
+  ): Promise<CommentResponse[]> {
+    const rows = await this.createCommentsBaseQuery(postId, requesterUserId)
+      .andWhere('comment.reply_to_comment_id = :replyToCommentId', { replyToCommentId })
+      .andWhere('comment.post_comment_id IN (:...commentIds)', { commentIds })
+      .getRawMany<CommentRow>();
+
+    return rows.map((row) => this.mapCommentRow(row));
   }
 
   private mapCommentRow(row: CommentRow): CommentResponse {

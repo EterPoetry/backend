@@ -9,6 +9,8 @@ import { Category } from '../categories/entities/category.entity';
 import { PostCategory } from '../categories/entities/post-category.entity';
 import { PostReaction } from '../reactions/entities/post-reaction.entity';
 import { PostComment } from '../comments/entities/post-comment.entity';
+import { PopularCommentSnapshot } from '../comments/entities/popular-comment-snapshot.entity';
+import { PopularCommentSnapshotItem } from '../comments/entities/popular-comment-snapshot-item.entity';
 import { CommentReaction } from '../reactions/entities/comment-reaction.entity';
 import { Subscription } from '../subscriptions/entities/subscription.entity';
 import { Transaction } from '../subscriptions/entities/transaction.entity';
@@ -32,6 +34,8 @@ export const ENTITIES = [
   PostCategory,
   PostReaction,
   PostComment,
+  PopularCommentSnapshot,
+  PopularCommentSnapshotItem,
   CommentReaction,
   Subscription,
   Transaction,
