@@ -122,6 +122,9 @@ class CommentResponseDto implements CommentResponse {
   @ApiProperty()
   isLiked: boolean;
 
+  @ApiProperty()
+  isLikedByAuthor: boolean;
+
   @ApiProperty({ type: () => CommentAuthorResponseDto })
   author: CommentAuthorResponseDto;
 }

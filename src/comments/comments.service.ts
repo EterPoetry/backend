@@ -33,6 +33,7 @@ export interface CommentResponse {
   repliesCount: number;
   likesCount: number;
   isLiked: boolean;
+  isLikedByAuthor: boolean;
   author: CommentAuthorResponse;
 }
 
@@ -267,6 +268,7 @@ export class CommentsService {
   private createCommentsBaseQuery(postId: number, requesterUserId: number | null) {
     return this.commentsRepository
       .createQueryBuilder('comment')
+      .innerJoin('comment.post', 'post')
       .innerJoin('comment.commentAuthor', 'author')
       .leftJoin('author.subscription', 'authorSubscription')
       .leftJoin(
@@ -274,6 +276,11 @@ export class CommentsService {
         'requesterReaction',
         'requesterReaction.post_comment_id = comment.post_comment_id AND requesterReaction.user_id = :requesterUserId',
         { requesterUserId },
+      )
+      .leftJoin(
+        CommentReaction,
+        'authorReaction',
+        'authorReaction.post_comment_id = comment.post_comment_id AND authorReaction.user_id = post.author_id',
       )
       .where('comment.post_id = :postId', { postId })
       .select([
@@ -287,6 +294,7 @@ export class CommentsService {
         'author.photo AS author_photo',
         'authorSubscription.status AS author_subscription_status',
         'requesterReaction.comment_reaction_id AS requester_reaction_id',
+        'authorReaction.comment_reaction_id AS author_reaction_id',
       ])
       .addSelect((subQuery) => {
         return subQuery
@@ -645,6 +653,8 @@ export class CommentsService {
       repliesCount: Number(row.replies_count ?? 0),
       likesCount: Number(row.likes_count ?? 0),
       isLiked: row.requester_reaction_id !== null && row.requester_reaction_id !== undefined,
+      isLikedByAuthor:
+        row.author_reaction_id !== null && row.author_reaction_id !== undefined,
       author: {
         userId: Number(row.author_user_id),
         name: row.author_name,
@@ -702,6 +712,7 @@ interface CommentRow {
   replies_count?: number | string | null;
   likes_count: number | string;
   requester_reaction_id: number | string | null;
+  author_reaction_id: number | string | null;
   author_user_id: number | string;
   author_name: string;
   author_username: string;
