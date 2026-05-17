@@ -484,6 +484,26 @@ export class ProfileController {
     return this.profileService.getProfileByUsername(username, req.user?.userId ?? null);
   }
 
+  @Get(':userId/followers')
+  @UseGuards(OptionalJwtAuthGuard)
+  async getProfileFollowersById(
+    @Req() req: RequestWithUser,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query() query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponseDto> {
+    return this.profileService.getProfileFollowersById(userId, req.user?.userId ?? null, query);
+  }
+
+  @Get(':userId/following')
+  @UseGuards(OptionalJwtAuthGuard)
+  async getProfileFollowingById(
+    @Req() req: RequestWithUser,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query() query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponseDto> {
+    return this.profileService.getProfileFollowingById(userId, req.user?.userId ?? null, query);
+  }
+
   @Get(':userId/posts')
   @UseGuards(OptionalJwtAuthGuard)
   async getProfilePublishedPostsById(

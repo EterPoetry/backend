@@ -289,6 +289,24 @@ export class ProfileService {
     return this.getFollowList(userId, userId, query, 'following');
   }
 
+  async getProfileFollowersById(
+    profileUserId: number,
+    requesterUserId: number | null,
+    query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponse> {
+    await this.ensureUserExists(profileUserId);
+    return this.getFollowList(profileUserId, requesterUserId, query, 'followers');
+  }
+
+  async getProfileFollowingById(
+    profileUserId: number,
+    requesterUserId: number | null,
+    query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponse> {
+    await this.ensureUserExists(profileUserId);
+    return this.getFollowList(profileUserId, requesterUserId, query, 'following');
+  }
+
   async getProfileFollowersByUsername(
     username: string,
     requesterUserId: number,
@@ -480,7 +498,7 @@ export class ProfileService {
 
   private async getFollowList(
     profileUserId: number,
-    requesterUserId: number,
+    requesterUserId: number | null,
     query: GetProfileFollowListQueryDto,
     mode: 'followers' | 'following',
   ): Promise<PaginatedProfileFollowListResponse> {
