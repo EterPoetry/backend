@@ -298,6 +298,16 @@ export class ProfileService {
     return this.postsService.getPublishedPostsByAuthor(profileUserId, query, requesterUserId);
   }
 
+  async followUserByUsername(username: string, followerUserId: number): Promise<PublicProfileResponse> {
+    const user = await this.requireActiveUserByUsername(username);
+    return this.followUser(user.userId, followerUserId);
+  }
+
+  async unfollowUserByUsername(username: string, followerUserId: number): Promise<PublicProfileResponse> {
+    const user = await this.requireActiveUserByUsername(username);
+    return this.unfollowUser(user.userId, followerUserId);
+  }
+
   async followUser(targetUserId: number, followerUserId: number): Promise<PublicProfileResponse> {
     if (targetUserId === followerUserId) {
       throw new BadRequestException('You cannot follow yourself.');
