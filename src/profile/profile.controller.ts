@@ -483,4 +483,13 @@ export class ProfileController {
   ): Promise<PublicProfileResponseDto> {
     return this.profileService.getProfileByUsername(username, req.user?.userId ?? null);
   }
+
+  @Get(':userId')
+  @UseGuards(OptionalJwtAuthGuard)
+  async getProfileById(
+    @Req() req: RequestWithUser,
+    @Param('userId', ParseIntPipe) userId: number,
+  ): Promise<PublicProfileResponseDto> {
+    return this.profileService.getProfileById(userId, req.user?.userId ?? null);
+  }
 }
