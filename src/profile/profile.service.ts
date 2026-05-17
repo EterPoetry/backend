@@ -289,6 +289,24 @@ export class ProfileService {
     return this.getFollowList(userId, userId, query, 'following');
   }
 
+  async getProfileFollowersByUsername(
+    username: string,
+    requesterUserId: number,
+    query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponse> {
+    const user = await this.requireActiveUserByUsername(username);
+    return this.getFollowList(user.userId, requesterUserId, query, 'followers');
+  }
+
+  async getProfileFollowingByUsername(
+    username: string,
+    requesterUserId: number,
+    query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponse> {
+    const user = await this.requireActiveUserByUsername(username);
+    return this.getFollowList(user.userId, requesterUserId, query, 'following');
+  }
+
   async getProfilePublishedPosts(
     profileUserId: number,
     query: GetMyPostsQueryDto,

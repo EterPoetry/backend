@@ -372,6 +372,34 @@ export class ProfileController {
     return this.profileService.getMyFollowing(this.requireUser(req).userId, query);
   }
 
+  @Get('username/:username/followers')
+  @UseGuards(JwtAuthGuard)
+  async getProfileFollowers(
+    @Req() req: RequestWithUser,
+    @Param('username') username: string,
+    @Query() query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponseDto> {
+    return this.profileService.getProfileFollowersByUsername(
+      username,
+      this.requireUser(req).userId,
+      query,
+    );
+  }
+
+  @Get('username/:username/following')
+  @UseGuards(JwtAuthGuard)
+  async getProfileFollowing(
+    @Req() req: RequestWithUser,
+    @Param('username') username: string,
+    @Query() query: GetProfileFollowListQueryDto,
+  ): Promise<PaginatedProfileFollowListResponseDto> {
+    return this.profileService.getProfileFollowingByUsername(
+      username,
+      this.requireUser(req).userId,
+      query,
+    );
+  }
+
   @Patch('me')
   @UseGuards(JwtAuthGuard)
   async updateMyProfile(
