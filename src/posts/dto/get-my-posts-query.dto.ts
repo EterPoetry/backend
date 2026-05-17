@@ -14,6 +14,11 @@ export enum SortOrder {
   DESC = 'desc',
 }
 
+export enum PostAuthorTypeFilter {
+  AUTHOR = 'author',
+  ORIGINAL = 'original',
+}
+
 export class GetMyPostsQueryDto {
   @ApiPropertyOptional({ maxLength: 200 })
   @IsOptional()
@@ -45,4 +50,12 @@ export class GetMyPostsQueryDto {
   @Min(1)
   @Max(100)
   limit: number = 20;
+
+  @ApiPropertyOptional({
+    enum: PostAuthorTypeFilter,
+    enumName: 'PostAuthorTypeFilter',
+  })
+  @IsOptional()
+  @IsEnum(PostAuthorTypeFilter)
+  authorType?: PostAuthorTypeFilter;
 }

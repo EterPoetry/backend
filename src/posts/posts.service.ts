@@ -22,6 +22,7 @@ import { PostAudioStorageService, UploadedPostAudio } from './post-audio-storage
 import { PostAudioTranscodingService } from './post-audio-transcoding.service';
 import {
   GetMyPostsQueryDto,
+  PostAuthorTypeFilter,
   MyPostsSortBy,
   SortOrder,
 } from './dto/get-my-posts-query.dto';
@@ -756,6 +757,12 @@ export class PostsService {
         `(COALESCE(post.title, '') ILIKE :search OR COALESCE(post.description, '') ILIKE :search OR COALESCE(post.text, '') ILIKE :search)`,
         { search: `%${query.search.trim()}%` },
       );
+    }
+
+    if (query.authorType === PostAuthorTypeFilter.ORIGINAL) {
+      queryBuilder.andWhere('post.origin_author_name IS NOT NULL');
+    } else if (query.authorType === PostAuthorTypeFilter.AUTHOR) {
+      queryBuilder.andWhere('post.origin_author_name IS NULL');
     }
 
     const sortColumn = this.mapSortByToColumn(query.sortBy);

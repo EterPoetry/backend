@@ -412,40 +412,44 @@ export class ProfileController {
     return this.profileService.updateMyAvatar(this.requireUser(req).userId, avatar);
   }
 
-  @HttpPost(':userId/follow')
+  @HttpPost('username/:username/follow')
   @UseGuards(JwtAuthGuard)
   async followUser(
     @Req() req: RequestWithUser,
-    @Param('userId', ParseIntPipe) userId: number,
+    @Param('username') username: string,
   ): Promise<PublicProfileResponseDto> {
-    return this.profileService.followUser(userId, this.requireUser(req).userId);
+    return this.profileService.followUserByUsername(username, this.requireUser(req).userId);
   }
 
-  @Delete(':userId/follow')
+  @Delete('username/:username/follow')
   @UseGuards(JwtAuthGuard)
   async unfollowUser(
     @Req() req: RequestWithUser,
-    @Param('userId', ParseIntPipe) userId: number,
+    @Param('username') username: string,
   ): Promise<PublicProfileResponseDto> {
-    return this.profileService.unfollowUser(userId, this.requireUser(req).userId);
+    return this.profileService.unfollowUserByUsername(username, this.requireUser(req).userId);
   }
 
-  @Get(':userId/posts')
+  @Get('username/:username/posts')
   @UseGuards(OptionalJwtAuthGuard)
-  async getProfilePublishedPosts(
+  async getProfilePublishedPostsByUsername(
     @Req() req: RequestWithUser,
-    @Param('userId', ParseIntPipe) userId: number,
+    @Param('username') username: string,
     @Query() query: GetMyPostsQueryDto,
   ): Promise<PaginatedPostsResponseDto> {
-    return this.profileService.getProfilePublishedPosts(userId, query, req.user?.userId ?? null);
+    return this.profileService.getProfilePublishedPostsByUsername(
+      username,
+      query,
+      req.user?.userId ?? null,
+    );
   }
 
-  @Get(':userId')
+  @Get('username/:username')
   @UseGuards(OptionalJwtAuthGuard)
-  async getProfileById(
+  async getProfileByUsername(
     @Req() req: RequestWithUser,
-    @Param('userId', ParseIntPipe) userId: number,
+    @Param('username') username: string,
   ): Promise<PublicProfileResponseDto> {
-    return this.profileService.getProfileById(userId, req.user?.userId ?? null);
+    return this.profileService.getProfileByUsername(username, req.user?.userId ?? null);
   }
 }

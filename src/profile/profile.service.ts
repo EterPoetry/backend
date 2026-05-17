@@ -120,8 +120,30 @@ export class ProfileService {
     profileUserId: number,
     requesterUserId: number | null,
   ): Promise<PublicProfileResponse> {
+    const user = await this.requireActiveUserById(profileUserId);
+    return this.buildPublicProfileResponse(user, requesterUserId);
+  }
+
+  async getProfileByUsername(
+    username: string,
+    requesterUserId: number | null,
+  ): Promise<PublicProfileResponse> {
+    const user = await this.requireActiveUserByUsername(username);
+    return this.buildPublicProfileResponse(user, requesterUserId);
+  }
+
+  async getProfilePublishedPostsByUsername(
+    username: string,
+    query: GetMyPostsQueryDto,
+    requesterUserId: number | null,
+  ): Promise<PaginatedPostsResponse> {
+    const user = await this.requireActiveUserByUsername(username);
+    return this.postsService.getPublishedPostsByAuthor(user.userId, query, requesterUserId);
+  }
+
+  private async requireActiveUserById(userId: number): Promise<User> {
     const user = await this.usersRepository.findOne({
-      where: { userId: profileUserId },
+      where: { userId },
       relations: { subscription: true },
     });
 
@@ -129,7 +151,21 @@ export class ProfileService {
       throw new NotFoundException('User not found.');
     }
 
-    return this.buildPublicProfileResponse(user, requesterUserId);
+    return user;
+  }
+
+  private async requireActiveUserByUsername(username: string): Promise<User> {
+    const normalizedUsername = this.usernameService.normalizeUsername(username);
+    const user = await this.usersRepository.findOne({
+      where: { username: normalizedUsername },
+      relations: { subscription: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    return user;
   }
 
   async updateMyProfile(

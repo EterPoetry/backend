@@ -208,7 +208,7 @@ export class SitemapService {
 
     const entries = users.map((user) =>
       this.buildUrlEntry(
-        `${this.siteUrl}/users/${this.escapeXml(user.username)}`,
+        `${this.siteUrl}/@${this.escapeXml(user.username)}`,
         user.createdAt,
       ),
     );

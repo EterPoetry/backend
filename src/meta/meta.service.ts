@@ -91,9 +91,10 @@ export class MetaService {
     };
   }
 
-  async getProfileMeta(profileUserId: number): Promise<PageMetaResponse> {
+  async getProfileMetaByUsername(username: string): Promise<PageMetaResponse> {
+    const normalizedUsername = username.trim().toLowerCase();
     const profile = await this.usersRepository.findOne({
-      where: { userId: profileUserId },
+      where: { username: normalizedUsername },
     });
 
     if (!profile) {
@@ -113,7 +114,7 @@ export class MetaService {
       `${title}'s profile on ${this.getSiteName()}`,
       this.getDefaultMetaDescription(),
     );
-    const url = this.buildPublicUrl(`/profiles/${profile.userId}`);
+    const url = this.buildPublicUrl(`/${profile.username}`);
 
     return {
       title,

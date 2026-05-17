@@ -15,10 +15,10 @@ export class MetaController {
     return this.metaService.getPostMeta(postId);
   }
 
-  @Get('profiles/:userId')
+  @Get('profiles/:username')
   @ApiOkResponse({ type: PageMetaResponseDto })
   @ApiNotFoundResponse({ description: 'Not found' })
-  async getProfileMeta(@Param('userId', ParseIntPipe) userId: number): Promise<PageMetaResponseDto> {
-    return this.metaService.getProfileMeta(userId);
+  async getProfileMeta(@Param('username') username: string): Promise<PageMetaResponseDto> {
+    return this.metaService.getProfileMetaByUsername(username);
   }
 }
