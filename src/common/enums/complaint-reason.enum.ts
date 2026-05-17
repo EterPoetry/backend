@@ -14,11 +14,11 @@ export enum ComplaintReason {
 
 export const COMPLAINT_REASON_LABELS: Record<ComplaintReason, string> = {
   [ComplaintReason.COPYRIGHT_INFRINGEMENT]: 'Порушення авторського права',
-  [ComplaintReason.PLAGIARISM]: 'Видає чужий вірш за власний',
+  [ComplaintReason.PLAGIARISM]: 'Плагіат',
   [ComplaintReason.OFFENSIVE_OR_DISCRIMINATORY_CONTENT]:
     'Образливий або дискримінаційний зміст',
   [ComplaintReason.HATE_SPEECH]: 'Мова ворожнечі',
-  [ComplaintReason.TARGETED_HARASSMENT]: 'Спрямовано проти конкретної людини',
+  [ComplaintReason.TARGETED_HARASSMENT]: 'Спрямування проти конкретної людини',
   [ComplaintReason.ADVERTISING_OR_SPAM]: 'Реклама або спам',
   [ComplaintReason.NOT_POETRY]: 'Не є поезією',
   [ComplaintReason.RUSSIAN_LANGUAGE]: 'Використання російської мови',
