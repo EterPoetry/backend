@@ -1,7 +1,10 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { Repository } from 'typeorm';
+import { User } from '../../users/entities/user.entity';
 
 export interface JwtAccessPayload {
   sub: number;
@@ -11,7 +14,11 @@ export interface JwtAccessPayload {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(configService: ConfigService) {
+  constructor(
+    configService: ConfigService,
+    @InjectRepository(User)
+    private readonly usersRepository: Repository<User>,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -19,10 +26,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  validate(payload: JwtAccessPayload): { userId: number; email?: string } {
+  async validate(payload: JwtAccessPayload): Promise<{ userId: number; email?: string }> {
     if (payload.type !== 'access') {
       throw new UnauthorizedException('Invalid token type.');
     }
-    return { userId: payload.sub, email: payload.email };
+
+    const user = await this.usersRepository.findOne({
+      where: { userId: payload.sub },
+      select: { userId: true, email: true },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found.');
+    }
+
+    return { userId: user.userId, email: user.email ?? payload.email };
   }
 }

@@ -116,9 +116,11 @@ export class SitemapService {
         floor((rn - 1) / $1::int) AS shard_num,
         MAX(updated_at)            AS max_updated
       FROM (
-        SELECT updated_at, ROW_NUMBER() OVER (ORDER BY post_id ASC) AS rn
+        SELECT posts.updated_at, ROW_NUMBER() OVER (ORDER BY posts.post_id ASC) AS rn
         FROM posts
-        WHERE status = $2
+        INNER JOIN users ON users.user_id = posts.author_id
+        WHERE posts.status = $2
+          AND users.deleted_at IS NULL
       ) sub
       GROUP BY shard_num
       ORDER BY shard_num
@@ -136,6 +138,7 @@ export class SitemapService {
       FROM (
         SELECT created_at, ROW_NUMBER() OVER (ORDER BY user_id ASC) AS rn
         FROM users
+        WHERE deleted_at IS NULL
       ) sub
       GROUP BY shard_num
       ORDER BY shard_num
@@ -149,7 +152,13 @@ export class SitemapService {
       `
       SELECT MAX(updated_at) AS max_updated
       FROM (
-        SELECT updated_at FROM posts WHERE status = $1 ORDER BY post_id DESC LIMIT $2
+        SELECT posts.updated_at
+        FROM posts
+        INNER JOIN users ON users.user_id = posts.author_id
+        WHERE posts.status = $1
+          AND users.deleted_at IS NULL
+        ORDER BY posts.post_id DESC
+        LIMIT $2
       ) sub
       `,
       [PostStatus.PUBLISHED, this.recentPostsCount],
@@ -165,6 +174,7 @@ export class SitemapService {
 
     const posts = await this.postRepository
       .createQueryBuilder('post')
+      .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
       .select(['post.postId', 'post.updatedAt'])
       .where('post.status = :status', { status: PostStatus.PUBLISHED })
       .orderBy('post.postId', 'ASC')
@@ -190,6 +200,7 @@ export class SitemapService {
     const users = await this.userRepository
       .createQueryBuilder('user')
       .select(['user.userId', 'user.username', 'user.createdAt'])
+      .where('user.deleted_at IS NULL')
       .orderBy('user.userId', 'ASC')
       .skip(shard * this.shardSize)
       .take(this.shardSize)
@@ -208,6 +219,7 @@ export class SitemapService {
   private async buildRecentPostsSitemap(): Promise<string> {
     const posts = await this.postRepository
       .createQueryBuilder('post')
+      .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
       .select(['post.postId', 'post.updatedAt'])
       .where('post.status = :status', { status: PostStatus.PUBLISHED })
       .orderBy('post.postId', 'DESC')

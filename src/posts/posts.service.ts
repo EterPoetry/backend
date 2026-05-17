@@ -271,7 +271,13 @@ export class PostsService {
     const queryBuilder = this.createPostDetailsQueryBuilder(userId)
       .where('post.status = :feedStatus', { feedStatus: PostStatus.PUBLISHED })
       .andWhere(
-        `post.author_id IN (SELECT f.target_user_id FROM followers f WHERE f.follower_user_id = :feedUserId)`,
+        `post.author_id IN (
+          SELECT f.target_user_id
+          FROM followers f
+          INNER JOIN users feedTargetUser ON feedTargetUser.user_id = f.target_user_id
+          WHERE f.follower_user_id = :feedUserId
+            AND feedTargetUser.deleted_at IS NULL
+        )`,
         { feedUserId: userId },
       );
 
@@ -422,6 +428,7 @@ export class PostsService {
   ): Promise<PaginatedPostsResponse> {
     const rankingQueryBuilder = this.postsRepository
       .createQueryBuilder('post')
+      .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
       .where('post.status = :status', { status: PostStatus.PUBLISHED });
 
     if (query.search?.trim()) {
@@ -453,13 +460,19 @@ export class PostsService {
           + (
             SELECT COUNT(*)
             FROM post_reactions popularity_post_reaction
+            INNER JOIN users popularity_reaction_user
+              ON popularity_reaction_user.user_id = popularity_post_reaction.user_id
             WHERE popularity_post_reaction.post_id = post.post_id
               AND popularity_post_reaction.reaction_type = :reactionType
+              AND popularity_reaction_user.deleted_at IS NULL
           ) * 3
           + (
             SELECT COUNT(*)
             FROM post_comments popularity_post_comment
+            INNER JOIN users popularity_comment_author
+              ON popularity_comment_author.user_id = popularity_post_comment.comment_author_id
             WHERE popularity_post_comment.post_id = post.post_id
+              AND popularity_comment_author.deleted_at IS NULL
           ) * 5
         )`,
         'popularityscore',
@@ -820,15 +833,33 @@ export class PostsService {
       const rankedRows = await manager
         .getRepository(Post)
         .createQueryBuilder('post')
+        .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
         .leftJoin(
           'post_reactions',
           'postReaction',
-          'postReaction.post_id = post.post_id AND postReaction.reaction_type = :reactionType',
+          `postReaction.post_id = post.post_id
+           AND postReaction.reaction_type = :reactionType
+           AND EXISTS (
+             SELECT 1
+             FROM users reactionUser
+             WHERE reactionUser.user_id = postReaction.user_id
+               AND reactionUser.deleted_at IS NULL
+           )`,
           {
             reactionType: ReactionType.LIKE,
           },
         )
-        .leftJoin('post_comments', 'postComment', 'postComment.post_id = post.post_id')
+        .leftJoin(
+          'post_comments',
+          'postComment',
+          `postComment.post_id = post.post_id
+           AND EXISTS (
+             SELECT 1
+             FROM users commentAuthor
+             WHERE commentAuthor.user_id = postComment.comment_author_id
+               AND commentAuthor.deleted_at IS NULL
+           )`,
+        )
         .where('post.status = :status', { status: PostStatus.PUBLISHED })
         .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
         .select('post.post_id', 'postId')
@@ -1266,7 +1297,12 @@ export class PostsService {
 
   private async requirePublishedPost(postId: number): Promise<Post> {
     const post = await this.postsRepository.findOne({
-      where: { postId, status: PostStatus.PUBLISHED },
+      where: {
+        postId,
+        status: PostStatus.PUBLISHED,
+        author: { deletedAt: IsNull() },
+      },
+      relations: { author: true },
       select: {
         postId: true,
         status: true,
@@ -1435,7 +1471,7 @@ export class PostsService {
   private createPostDetailsQueryBuilder(_requesterUserId: number | null = null) {
     const queryBuilder = this.postsRepository
       .createQueryBuilder('post')
-      .leftJoinAndSelect('post.author', 'author')
+      .innerJoinAndSelect('post.author', 'author', 'author.deleted_at IS NULL')
       .leftJoinAndSelect('author.subscription', 'authorSubscription')
       .leftJoinAndSelect('post.textParts', 'textPart')
       .leftJoinAndSelect('post.postCategories', 'postCategory')
@@ -1445,6 +1481,7 @@ export class PostsService {
           subQuery
             .select('COUNT(postReactionCount.post_reaction_id)')
             .from(PostReaction, 'postReactionCount')
+            .innerJoin('postReactionCount.user', 'postReactionUser', 'postReactionUser.deleted_at IS NULL')
             .where('postReactionCount.post_id = post.post_id')
             .andWhere('postReactionCount.reaction_type = :reactionType'),
         'post_likes_count',
@@ -1454,7 +1491,15 @@ export class PostsService {
           subQuery
             .select('COUNT(postCommentCount.post_comment_id)')
             .from('post_comments', 'postCommentCount')
-            .where('postCommentCount.post_id = post.post_id'),
+            .where('postCommentCount.post_id = post.post_id')
+            .andWhere(
+              `EXISTS (
+                SELECT 1
+                FROM users postCommentAuthor
+                WHERE postCommentAuthor.user_id = postCommentCount.comment_author_id
+                  AND postCommentAuthor.deleted_at IS NULL
+              )`,
+            ),
         'post_comments_count',
       )
       .setParameter('reactionType', ReactionType.LIKE);
@@ -1465,6 +1510,7 @@ export class PostsService {
           subQuery
             .select('requesterReaction.post_reaction_id')
             .from(PostReaction, 'requesterReaction')
+            .innerJoin('requesterReaction.user', 'requesterReactionUser', 'requesterReactionUser.deleted_at IS NULL')
             .where('requesterReaction.post_id = post.post_id')
             .andWhere('requesterReaction.user_id = :requesterUserId')
             .andWhere('requesterReaction.reaction_type = :reactionType')
@@ -1541,12 +1587,17 @@ export class PostsService {
   }
 
   private async getPostLikesCount(postId: number): Promise<number> {
-    return this.postReactionsRepository.count({
-      where: {
-        postId,
+    const result = await this.postReactionsRepository
+      .createQueryBuilder('reaction')
+      .innerJoin('reaction.user', 'user', 'user.deleted_at IS NULL')
+      .where('reaction.post_id = :postId', { postId })
+      .andWhere('reaction.reaction_type = :reactionType', {
         reactionType: ReactionType.LIKE,
-      },
-    });
+      })
+      .select('COUNT(reaction.post_reaction_id)', 'count')
+      .getRawOne<{ count: string }>();
+
+    return Number(result?.count ?? 0);
   }
 
   private validateTextSynchronization(
@@ -1628,7 +1679,11 @@ export class PostsService {
 
   private async getPostForListening(postId: number, requesterUserId: number | null): Promise<Post> {
     const post = await this.postsRepository.findOne({
-      where: { postId },
+      where: {
+        postId,
+        author: { deletedAt: IsNull() },
+      },
+      relations: { author: true },
       select: {
         postId: true,
         authorId: true,

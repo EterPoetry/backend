@@ -97,6 +97,7 @@ export class UsernameService {
       const candidate = this.buildUsernameCandidate(baseUsername, attempt);
       const existingUser = await this.usersRepository.findOne({
         where: { username: candidate },
+        withDeleted: true,
       });
 
       if (!existingUser || existingUser.userId === excludeUserId) {
@@ -141,6 +142,7 @@ export class UsernameService {
   ): Promise<void> {
     const existingUser = await this.usersRepository.findOne({
       where: { username },
+      withDeleted: true,
     });
 
     if (existingUser && existingUser.userId !== excludeUserId) {

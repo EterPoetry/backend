@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { extname } from 'path';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { Post } from '../posts/entities/post.entity';
 import { FileStorageService } from '../storage/file-storage.service';
@@ -39,6 +39,7 @@ export class MetaService {
       where: {
         postId,
         status: PostStatus.PUBLISHED,
+        author: { deletedAt: IsNull() },
       },
       relations: {
         author: true,

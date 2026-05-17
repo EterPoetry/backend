@@ -131,6 +131,7 @@ export class AuthService {
     const conflicts: UserConflictError[] = [];
     const existingUser = await this.usersRepository.findOne({
       where: { email: dto.email },
+      withDeleted: true,
     });
 
     if (existingUser) {
@@ -145,6 +146,7 @@ export class AuthService {
       if (normalizedUsername.length >= 3) {
         const existingUsernameUser = await this.usersRepository.findOne({
           where: { username: normalizedUsername },
+          withDeleted: true,
         });
 
         if (existingUsernameUser) {
@@ -730,7 +732,17 @@ export class AuthService {
     const emailFilter = payload.email ? [{ email: payload.email }] : [];
     let user = await this.usersRepository.findOne({
       where: [{ googleId: payload.sub }, ...emailFilter],
+      withDeleted: true,
     });
+
+    if (user?.deletedAt) {
+      throw createUserConflictsException(
+        [
+          payload.email ? getUserConflictError('email') : null,
+          getUserConflictError('googleId'),
+        ].filter((error): error is UserConflictError => error !== null),
+      );
+    }
 
     if (!user) {
       const fallbackName = payload.name || payload.email?.split('@')[0] || 'User';

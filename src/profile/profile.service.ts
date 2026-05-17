@@ -319,8 +319,8 @@ export class ProfileService {
 
   private async buildProfileResponse(user: User): Promise<ProfileResponse> {
     const [followersCount, followingCount, postsCount, currentViolationsCount] = await Promise.all([
-      this.followersRepository.countBy({ targetUserId: user.userId }),
-      this.followersRepository.countBy({ followerUserId: user.userId }),
+      this.countActiveFollowers(user.userId),
+      this.countActiveFollowing(user.userId),
       this.postsRepository.countBy({ authorId: user.userId }),
       this.countActiveViolations(user.userId),
     ]);
@@ -349,17 +349,10 @@ export class ProfileService {
     requesterUserId: number | null,
   ): Promise<PublicProfileResponse> {
     const [followersCount, followingCount, postsCount, isSubscribed] = await Promise.all([
-      this.followersRepository.countBy({ targetUserId: user.userId }),
-      this.followersRepository.countBy({ followerUserId: user.userId }),
+      this.countActiveFollowers(user.userId),
+      this.countActiveFollowing(user.userId),
       this.postsRepository.countBy({ authorId: user.userId }),
-      requesterUserId === null
-        ? Promise.resolve(false)
-        : this.followersRepository.exist({
-            where: {
-              followerUserId: requesterUserId,
-              targetUserId: user.userId,
-            },
-          }),
+      requesterUserId === null ? Promise.resolve(false) : this.isFollowingActiveUser(requesterUserId, user.userId),
     ]);
 
     return {
@@ -448,7 +441,8 @@ export class ProfileService {
         'requesterFollow.follower_user_id = :requesterUserId AND requesterFollow.target_user_id = listUser.user_id',
         { requesterUserId },
       )
-      .leftJoin('listUser.subscription', 'listUserSubscription');
+      .leftJoin('listUser.subscription', 'listUserSubscription')
+      .where('listUser.deleted_at IS NULL');
 
     if (query.search?.trim()) {
       queryBuilder.andWhere(
@@ -573,5 +567,41 @@ export class ProfileService {
       }),
       'utf8',
     ).toString('base64url');
+  }
+
+  private async countActiveFollowers(userId: number): Promise<number> {
+    const result = await this.followersRepository
+      .createQueryBuilder('relation')
+      .innerJoin('relation.followerUser', 'followerUser', 'followerUser.deleted_at IS NULL')
+      .where('relation.target_user_id = :userId', { userId })
+      .select('COUNT(relation.follower_id)', 'count')
+      .getRawOne<{ count: string }>();
+
+    return Number(result?.count ?? 0);
+  }
+
+  private async countActiveFollowing(userId: number): Promise<number> {
+    const result = await this.followersRepository
+      .createQueryBuilder('relation')
+      .innerJoin('relation.targetUser', 'targetUser', 'targetUser.deleted_at IS NULL')
+      .where('relation.follower_user_id = :userId', { userId })
+      .select('COUNT(relation.follower_id)', 'count')
+      .getRawOne<{ count: string }>();
+
+    return Number(result?.count ?? 0);
+  }
+
+  private async isFollowingActiveUser(
+    followerUserId: number,
+    targetUserId: number,
+  ): Promise<boolean> {
+    const count = await this.followersRepository
+      .createQueryBuilder('relation')
+      .innerJoin('relation.targetUser', 'targetUser', 'targetUser.deleted_at IS NULL')
+      .where('relation.follower_user_id = :followerUserId', { followerUserId })
+      .andWhere('relation.target_user_id = :targetUserId', { targetUserId })
+      .getCount();
+
+    return count > 0;
   }
 }

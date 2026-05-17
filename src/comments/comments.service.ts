@@ -87,12 +87,7 @@ export class CommentsService {
       return this.getPopularCommentsPage(postId, requesterUserId, query, null);
     }
 
-    const total = await this.commentsRepository.count({
-      where: {
-        postId,
-        replyToCommentId: IsNull(),
-      },
-    });
+    const total = await this.countVisibleComments(postId, null);
 
     const queryBuilder = this.createTopLevelCommentsQuery(postId, requesterUserId)
       .andWhere('comment.reply_to_comment_id IS NULL');
@@ -122,11 +117,7 @@ export class CommentsService {
     }
 
     const sort: CommentSort = 'oldest';
-    const total = await this.commentsRepository.count({
-      where: {
-        replyToCommentId: parentComment.postCommentId,
-      },
-    });
+    const total = await this.countVisibleComments(parentComment.postId, parentComment.postCommentId);
 
     const queryBuilder = this.createCommentsBaseQuery(parentComment.postId, requesterUserId)
       .andWhere('comment.reply_to_comment_id = :commentId', { commentId: parentComment.postCommentId });
@@ -242,6 +233,7 @@ export class CommentsService {
     const comment = await this.commentsRepository
       .createQueryBuilder('comment')
       .innerJoinAndSelect('comment.post', 'post')
+      .innerJoin('post.author', 'postAuthor', 'postAuthor.deleted_at IS NULL')
       .where('comment.post_comment_id = :commentId', { commentId })
       .andWhere('post.status = :status', { status: PostStatus.PUBLISHED })
       .getOne();
@@ -269,18 +261,33 @@ export class CommentsService {
     return this.commentsRepository
       .createQueryBuilder('comment')
       .innerJoin('comment.post', 'post')
-      .innerJoin('comment.commentAuthor', 'author')
+      .innerJoin('post.author', 'postAuthor', 'postAuthor.deleted_at IS NULL')
+      .innerJoin('comment.commentAuthor', 'author', 'author.deleted_at IS NULL')
       .leftJoin('author.subscription', 'authorSubscription')
       .leftJoin(
         CommentReaction,
         'requesterReaction',
-        'requesterReaction.post_comment_id = comment.post_comment_id AND requesterReaction.user_id = :requesterUserId',
+        `requesterReaction.post_comment_id = comment.post_comment_id
+         AND requesterReaction.user_id = :requesterUserId
+         AND EXISTS (
+           SELECT 1
+           FROM users requesterReactionUser
+           WHERE requesterReactionUser.user_id = requesterReaction.user_id
+             AND requesterReactionUser.deleted_at IS NULL
+         )`,
         { requesterUserId },
       )
       .leftJoin(
         CommentReaction,
         'authorReaction',
-        'authorReaction.post_comment_id = comment.post_comment_id AND authorReaction.user_id = post.author_id',
+        `authorReaction.post_comment_id = comment.post_comment_id
+         AND authorReaction.user_id = post.author_id
+         AND EXISTS (
+           SELECT 1
+           FROM users authorReactionUser
+           WHERE authorReactionUser.user_id = authorReaction.user_id
+             AND authorReactionUser.deleted_at IS NULL
+         )`,
       )
       .where('comment.post_id = :postId', { postId })
       .select([
@@ -300,6 +307,7 @@ export class CommentsService {
         return subQuery
           .select('COUNT(reaction.comment_reaction_id)')
           .from(CommentReaction, 'reaction')
+          .innerJoin('reaction.user', 'reactionUser', 'reactionUser.deleted_at IS NULL')
           .where('reaction.post_comment_id = comment.post_comment_id');
       }, 'likes_count');
   }
@@ -309,6 +317,7 @@ export class CommentsService {
       return subQuery
         .select('COUNT(reply.post_comment_id)')
         .from(PostComment, 'reply')
+        .innerJoin('reply.commentAuthor', 'replyAuthor', 'replyAuthor.deleted_at IS NULL')
         .where('reply.reply_to_comment_id = comment.post_comment_id');
     }, 'replies_count');
   }
@@ -573,10 +582,17 @@ export class CommentsService {
     const queryBuilder = manager
       .getRepository(PostComment)
       .createQueryBuilder('comment')
+      .innerJoin('comment.commentAuthor', 'author', 'author.deleted_at IS NULL')
       .leftJoin(
         'comment_reactions',
         'commentReaction',
-        'commentReaction.post_comment_id = comment.post_comment_id',
+        `commentReaction.post_comment_id = comment.post_comment_id
+         AND EXISTS (
+           SELECT 1
+           FROM users reactionUser
+           WHERE reactionUser.user_id = commentReaction.user_id
+             AND reactionUser.deleted_at IS NULL
+         )`,
       )
       .where('comment.post_id = :postId', { postId })
       .select('comment.post_comment_id', 'commentId')
@@ -670,6 +686,10 @@ export class CommentsService {
       where: {
         postId,
         status: PostStatus.PUBLISHED,
+        author: { deletedAt: IsNull() },
+      },
+      relations: {
+        author: true,
       },
     });
 
@@ -684,6 +704,8 @@ export class CommentsService {
     const comment = await this.commentsRepository
       .createQueryBuilder('comment')
       .innerJoin('comment.post', 'post')
+      .innerJoin('post.author', 'postAuthor', 'postAuthor.deleted_at IS NULL')
+      .innerJoin('comment.commentAuthor', 'author', 'author.deleted_at IS NULL')
       .where('comment.post_comment_id = :commentId', { commentId })
       .andWhere('post.status = :status', { status: PostStatus.PUBLISHED })
       .getOne();
@@ -696,11 +718,32 @@ export class CommentsService {
   }
 
   private async getCommentLikesCount(commentId: number): Promise<number> {
-    return this.commentReactionsRepository.count({
-      where: {
-        postCommentId: commentId,
-      },
-    });
+    const result = await this.commentReactionsRepository
+      .createQueryBuilder('reaction')
+      .innerJoin('reaction.user', 'user', 'user.deleted_at IS NULL')
+      .where('reaction.post_comment_id = :commentId', { commentId })
+      .select('COUNT(reaction.comment_reaction_id)', 'count')
+      .getRawOne<{ count: string }>();
+
+    return Number(result?.count ?? 0);
+  }
+
+  private async countVisibleComments(
+    postId: number,
+    replyToCommentId: number | null,
+  ): Promise<number> {
+    const queryBuilder = this.commentsRepository
+      .createQueryBuilder('comment')
+      .innerJoin('comment.commentAuthor', 'author', 'author.deleted_at IS NULL')
+      .where('comment.post_id = :postId', { postId });
+
+    if (replyToCommentId === null) {
+      queryBuilder.andWhere('comment.reply_to_comment_id IS NULL');
+    } else {
+      queryBuilder.andWhere('comment.reply_to_comment_id = :replyToCommentId', { replyToCommentId });
+    }
+
+    return queryBuilder.getCount();
   }
 }
 

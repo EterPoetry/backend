@@ -3,11 +3,11 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUrl,
   MaxLength,
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { IsSafePublicHttpsUrl } from '../../common/validators/is-safe-public-https-url.validator';
 import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH } from '../../users/username.constants';
 
 export class UpdateProfileDto {
@@ -55,8 +55,6 @@ export class UpdateProfileDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(500)
-  @IsUrl({
-    require_protocol: true,
-  })
+  @IsSafePublicHttpsUrl()
   link?: string | null;
 }
