@@ -267,27 +267,23 @@ export class CommentsService {
       .leftJoin(
         CommentReaction,
         'requesterReaction',
-        `requesterReaction.post_comment_id = comment.post_comment_id
-         AND requesterReaction.user_id = :requesterUserId
-         AND EXISTS (
-           SELECT 1
-           FROM users requesterReactionUser
-           WHERE requesterReactionUser.user_id = requesterReaction.user_id
-             AND requesterReactionUser.deleted_at IS NULL
-         )`,
+        'requesterReaction.post_comment_id = comment.post_comment_id AND requesterReaction.user_id = :requesterUserId',
         { requesterUserId },
+      )
+      .leftJoin(
+        'users',
+        'requesterReactionUser',
+        'requesterReactionUser.user_id = requesterReaction.user_id AND requesterReactionUser.deleted_at IS NULL',
       )
       .leftJoin(
         CommentReaction,
         'authorReaction',
-        `authorReaction.post_comment_id = comment.post_comment_id
-         AND authorReaction.user_id = post.author_id
-         AND EXISTS (
-           SELECT 1
-           FROM users authorReactionUser
-           WHERE authorReactionUser.user_id = authorReaction.user_id
-             AND authorReactionUser.deleted_at IS NULL
-         )`,
+        'authorReaction.post_comment_id = comment.post_comment_id AND authorReaction.user_id = post.author_id',
+      )
+      .leftJoin(
+        'users',
+        'authorReactionUser',
+        'authorReactionUser.user_id = authorReaction.user_id AND authorReactionUser.deleted_at IS NULL',
       )
       .where('comment.post_id = :postId', { postId })
       .select([
@@ -301,7 +297,9 @@ export class CommentsService {
         'author.photo AS author_photo',
         'authorSubscription.status AS author_subscription_status',
         'requesterReaction.comment_reaction_id AS requester_reaction_id',
+        'requesterReactionUser.user_id AS requester_reaction_user_id',
         'authorReaction.comment_reaction_id AS author_reaction_id',
+        'authorReactionUser.user_id AS author_reaction_user_id',
       ])
       .addSelect((subQuery) => {
         return subQuery
@@ -668,9 +666,12 @@ export class CommentsService {
           : Number(row.reply_to_comment_id),
       repliesCount: Number(row.replies_count ?? 0),
       likesCount: Number(row.likes_count ?? 0),
-      isLiked: row.requester_reaction_id !== null && row.requester_reaction_id !== undefined,
+      isLiked:
+        row.requester_reaction_user_id !== null &&
+        row.requester_reaction_user_id !== undefined,
       isLikedByAuthor:
-        row.author_reaction_id !== null && row.author_reaction_id !== undefined,
+        row.author_reaction_user_id !== null &&
+        row.author_reaction_user_id !== undefined,
       author: {
         userId: Number(row.author_user_id),
         name: row.author_name,
@@ -755,7 +756,9 @@ interface CommentRow {
   replies_count?: number | string | null;
   likes_count: number | string;
   requester_reaction_id: number | string | null;
+  requester_reaction_user_id: number | string | null;
   author_reaction_id: number | string | null;
+  author_reaction_user_id: number | string | null;
   author_user_id: number | string;
   author_name: string;
   author_username: string;
