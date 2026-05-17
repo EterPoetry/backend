@@ -581,22 +581,20 @@ export class CommentsService {
       .getRepository(PostComment)
       .createQueryBuilder('comment')
       .innerJoin('comment.commentAuthor', 'author', 'author.deleted_at IS NULL')
-      .leftJoin(
-        'comment_reactions',
-        'commentReaction',
-        `commentReaction.post_comment_id = comment.post_comment_id
-         AND EXISTS (
-           SELECT 1
-           FROM users reactionUser
-           WHERE reactionUser.user_id = commentReaction.user_id
-             AND reactionUser.deleted_at IS NULL
-         )`,
-      )
       .where('comment.post_id = :postId', { postId })
       .select('comment.post_comment_id', 'commentId')
-      .addSelect('COUNT(commentReaction.comment_reaction_id)', 'likesCount')
-      .groupBy('comment.post_comment_id')
-      .orderBy('COUNT(commentReaction.comment_reaction_id)', 'DESC')
+      .addSelect((subQuery) => {
+        return subQuery
+          .select('COUNT(reaction.comment_reaction_id)')
+          .from(CommentReaction, 'reaction')
+          .innerJoin(
+            'users',
+            'reactionUser',
+            'reactionUser.user_id = reaction.user_id AND reactionUser.deleted_at IS NULL',
+          )
+          .where('reaction.post_comment_id = comment.post_comment_id');
+      }, 'likesCount')
+      .orderBy('"likesCount"', 'DESC')
       .addOrderBy('comment.post_comment_id', 'DESC');
 
     if (replyToCommentId === null) {
