@@ -484,6 +484,16 @@ export class ProfileController {
     return this.profileService.getProfileByUsername(username, req.user?.userId ?? null);
   }
 
+  @Get(':userId/posts')
+  @UseGuards(OptionalJwtAuthGuard)
+  async getProfilePublishedPostsById(
+    @Req() req: RequestWithUser,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query() query: GetMyPostsQueryDto,
+  ): Promise<PaginatedPostsResponseDto> {
+    return this.profileService.getProfilePublishedPosts(userId, query, req.user?.userId ?? null);
+  }
+
   @Get(':userId')
   @UseGuards(OptionalJwtAuthGuard)
   async getProfileById(
