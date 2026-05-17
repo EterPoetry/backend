@@ -24,6 +24,8 @@ export interface ProfileResponse {
   username: string;
   email: string;
   photo: string | null;
+  bio: string | null;
+  link: string | null;
   isEmailVerified: boolean;
   isPremium: boolean;
   createdAt: Date;
@@ -39,6 +41,8 @@ export interface PublicProfileResponse {
   name: string;
   username: string;
   photo: string | null;
+  bio: string | null;
+  link: string | null;
   isPremium: boolean;
   isSubscribed: boolean;
   createdAt: Date;
@@ -150,6 +154,14 @@ export class ProfileService {
         dto.username,
         user.userId,
       );
+    }
+
+    if (dto.bio !== undefined) {
+      user.bio = this.normalizeOptionalProfileField(dto.bio);
+    }
+
+    if (dto.link !== undefined) {
+      user.link = this.normalizeOptionalProfileField(dto.link);
     }
 
     try {
@@ -319,6 +331,8 @@ export class ProfileService {
       username: user.username,
       email: user.email,
       photo: this.avatarStorageService.getAvatarUrl(user.photo),
+      bio: user.bio,
+      link: user.link,
       isEmailVerified: user.isEmailVerified,
       isPremium: user.subscription?.status === SubscriptionStatus.ACTIVE,
       createdAt: user.createdAt,
@@ -353,6 +367,8 @@ export class ProfileService {
       name: user.name,
       username: user.username,
       photo: this.avatarStorageService.getAvatarUrl(user.photo),
+      bio: user.bio,
+      link: user.link,
       isPremium: user.subscription?.status === SubscriptionStatus.ACTIVE,
       isSubscribed,
       createdAt: user.createdAt,
@@ -394,6 +410,15 @@ export class ProfileService {
     if (!exists) {
       throw new NotFoundException('User not found.');
     }
+  }
+
+  private normalizeOptionalProfileField(value: string | null): string | null {
+    if (value === null) {
+      return null;
+    }
+
+    const normalizedValue = value.trim();
+    return normalizedValue.length > 0 ? normalizedValue : null;
   }
 
   private async getFollowList(

@@ -71,6 +71,12 @@ class ProfileResponseDto implements ProfileResponse {
   @ApiPropertyOptional({ nullable: true })
   photo: string | null;
 
+  @ApiPropertyOptional({ nullable: true })
+  bio: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  link: string | null;
+
   @ApiProperty()
   isEmailVerified: boolean;
 
@@ -108,6 +114,12 @@ class PublicProfileResponseDto implements PublicProfileResponse {
 
   @ApiPropertyOptional({ nullable: true })
   photo: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  bio: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  link: string | null;
 
   @ApiProperty()
   isPremium: boolean;

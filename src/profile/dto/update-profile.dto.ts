@@ -1,5 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUrl,
+  MaxLength,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH } from '../../users/username.constants';
 
 export class UpdateProfileDto {
@@ -24,4 +32,31 @@ export class UpdateProfileDto {
   @MinLength(USERNAME_MIN_LENGTH)
   @MaxLength(USERNAME_MAX_LENGTH)
   username?: string;
+
+  @ApiPropertyOptional({
+    example: 'Poet, reader, and voice artist.',
+    maxLength: 500,
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_obj, value) => value !== null)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  bio?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'https://example.com',
+    maxLength: 500,
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_obj, value) => value !== null)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  @IsUrl({
+    require_protocol: true,
+  })
+  link?: string | null;
 }

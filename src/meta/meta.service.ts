@@ -106,6 +106,7 @@ export class MetaService {
       this.getDefaultMetaTitle(),
     );
     const description = this.buildDescription(
+      profile.bio,
       null,
       null,
       `${title}'s profile on ${this.getSiteName()}`,

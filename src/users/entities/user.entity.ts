@@ -48,6 +48,12 @@ export class User {
   @Column({ name: 'photo', type: 'varchar', length: 500, nullable: true })
   photo: string | null;
 
+  @Column({ name: 'bio', type: 'varchar', length: 500, nullable: true })
+  bio: string | null;
+
+  @Column({ name: 'link', type: 'varchar', length: 500, nullable: true })
+  link: string | null;
+
   @Column({ name: 'is_email_verified', type: 'boolean', default: false })
   isEmailVerified: boolean;
 
