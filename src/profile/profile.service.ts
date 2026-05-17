@@ -241,6 +241,27 @@ export class ProfileService {
     return this.buildProfileResponse(user);
   }
 
+  async deleteMyAvatar(userId: number): Promise<ProfileResponse> {
+    const user = await this.usersRepository.findOne({
+      where: { userId },
+      relations: { subscription: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    const previousAvatarPath = user.photo;
+    user.photo = null;
+    await this.usersRepository.save(user);
+
+    if (previousAvatarPath) {
+      await this.avatarStorageService.deleteAvatar(previousAvatarPath);
+    }
+
+    return this.buildProfileResponse(user);
+  }
+
   async getMyActiveViolations(userId: number): Promise<ActiveViolationResponse[]> {
     await this.ensureUserExists(userId);
 

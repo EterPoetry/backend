@@ -443,6 +443,12 @@ export class ProfileController {
     return this.profileService.updateMyAvatar(this.requireUser(req).userId, avatar);
   }
 
+  @Delete('me/avatar')
+  @UseGuards(JwtAuthGuard)
+  async deleteMyAvatar(@Req() req: RequestWithUser): Promise<ProfileResponseDto> {
+    return this.profileService.deleteMyAvatar(this.requireUser(req).userId);
+  }
+
   @HttpPost('username/:username/follow')
   @UseGuards(JwtAuthGuard)
   async followUser(
