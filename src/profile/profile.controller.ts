@@ -185,6 +185,9 @@ class PostResponseDto implements PostResponse {
   @ApiProperty()
   postId: number;
 
+  @ApiProperty()
+  slug: string;
+
   @ApiPropertyOptional({ nullable: true })
   title: string | null;
 

@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from '../posts/entities/post.entity';
-import { buildPostSlug } from '../posts/post-slug.util';
 import { User } from '../users/entities/user.entity';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { SitemapCache } from './sitemap.cache';
@@ -176,7 +175,7 @@ export class SitemapService {
     const posts = await this.postRepository
       .createQueryBuilder('post')
       .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
-      .select(['post.postId', 'post.title', 'post.updatedAt'])
+      .select(['post.postId', 'post.slug', 'post.updatedAt'])
       .where('post.status = :status', { status: PostStatus.PUBLISHED })
       .orderBy('post.postId', 'ASC')
       .skip(shard * this.shardSize)
@@ -185,7 +184,7 @@ export class SitemapService {
 
     const entries = posts.map((post) =>
       this.buildUrlEntry(
-        `${this.siteUrl}/posts/${buildPostSlug(post.postId, post.title)}`,
+        `${this.siteUrl}/posts/${post.slug}`,
         post.updatedAt,
       ),
     );
@@ -221,7 +220,7 @@ export class SitemapService {
     const posts = await this.postRepository
       .createQueryBuilder('post')
       .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
-      .select(['post.postId', 'post.title', 'post.updatedAt'])
+      .select(['post.postId', 'post.slug', 'post.updatedAt'])
       .where('post.status = :status', { status: PostStatus.PUBLISHED })
       .orderBy('post.postId', 'DESC')
       .take(this.recentPostsCount)
@@ -229,7 +228,7 @@ export class SitemapService {
 
     const entries = posts.map((post) =>
       this.buildUrlEntry(
-        `${this.siteUrl}/posts/${buildPostSlug(post.postId, post.title)}`,
+        `${this.siteUrl}/posts/${post.slug}`,
         post.updatedAt,
       ),
     );

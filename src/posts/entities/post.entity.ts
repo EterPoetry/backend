@@ -44,6 +44,9 @@ export class Post {
   @Column({ name: 'listens', type: 'integer', default: 0 })
   listens: number;
 
+  @Column({ name: 'slug', type: 'varchar', length: 300, unique: true })
+  slug: string;
+
   @Column({ name: 'origin_author_name', type: 'varchar', length: 200, nullable: true })
   originAuthorName: string | null;
 

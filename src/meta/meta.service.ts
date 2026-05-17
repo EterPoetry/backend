@@ -5,7 +5,6 @@ import { extname } from 'path';
 import { IsNull, Repository } from 'typeorm';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { Post } from '../posts/entities/post.entity';
-import { buildPostSlug } from '../posts/post-slug.util';
 import { FileStorageService } from '../storage/file-storage.service';
 import { User } from '../users/entities/user.entity';
 import { PageMetaResponse } from './dto/page-meta-response.dto';
@@ -60,7 +59,7 @@ export class MetaService {
     const poemText = poemParagraphs?.join('\n\n');
     const title = this.buildPostTitle(post, originAuthorName, authorName);
     const description = this.buildPostDescription(post, originAuthorName, authorName, textSnippet);
-    const url = this.buildPublicUrl(`/posts/${buildPostSlug(post.postId, post.title)}`);
+    const url = this.buildPublicUrl(`/posts/${post.slug}`);
     const audioFileUrl = this.resolveAudioFileUrl(post.audioFileName);
 
     return {

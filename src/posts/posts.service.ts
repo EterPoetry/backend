@@ -12,6 +12,7 @@ import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { PostAudioProcessingJobStatus } from '../common/enums/post-audio-processing-job-status.enum';
 import { Post } from './entities/post.entity';
+import { buildPostSlug } from './post-slug.util';
 import { PostAudioProcessingJob } from './entities/post-audio-processing-job.entity';
 import {
   PostListenSession,
@@ -63,6 +64,7 @@ export interface CategoryResponse {
 
 export interface PostResponse {
   postId: number;
+  slug: string;
   title: string | null;
   description: string | null;
   text: string | null;
@@ -221,8 +223,12 @@ export class PostsService {
             originAuthorName: null,
             status: PostStatus.PROCESSING,
             authorId,
+            slug: '',
           }),
         );
+
+        savedPostEntity.slug = buildPostSlug(savedPostEntity.postId, null);
+        await manager.getRepository(Post).save(savedPostEntity);
 
         await manager.getRepository(PostAudioProcessingJob).save(
           manager.getRepository(PostAudioProcessingJob).create({
@@ -1030,6 +1036,7 @@ export class PostsService {
 
       if (dto.title !== undefined) {
         updatePayload.title = dto.title;
+        updatePayload.slug = buildPostSlug(post.postId, dto.title);
       }
 
       if (dto.description !== undefined) {
@@ -1200,6 +1207,7 @@ export class PostsService {
 
     return {
       postId: post.postId,
+      slug: post.slug,
       title: post.title,
       description: post.description,
       text: post.text,
