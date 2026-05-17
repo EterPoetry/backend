@@ -837,28 +837,25 @@ export class PostsService {
         .leftJoin(
           'post_reactions',
           'postReaction',
-          `postReaction.post_id = post.post_id
-           AND postReaction.reaction_type = :reactionType
-           AND EXISTS (
-             SELECT 1
-             FROM users reactionUser
-             WHERE reactionUser.user_id = postReaction.user_id
-               AND reactionUser.deleted_at IS NULL
-           )`,
+          'postReaction.post_id = post.post_id AND postReaction.reaction_type = :reactionType',
           {
             reactionType: ReactionType.LIKE,
           },
         )
         .leftJoin(
+          'users',
+          'reactionUser',
+          'reactionUser.user_id = postReaction.user_id AND reactionUser.deleted_at IS NULL',
+        )
+        .leftJoin(
           'post_comments',
           'postComment',
-          `postComment.post_id = post.post_id
-           AND EXISTS (
-             SELECT 1
-             FROM users commentAuthor
-             WHERE commentAuthor.user_id = postComment.comment_author_id
-               AND commentAuthor.deleted_at IS NULL
-           )`,
+          'postComment.post_id = post.post_id',
+        )
+        .leftJoin(
+          'users',
+          'commentAuthor',
+          'commentAuthor.user_id = postComment.comment_author_id AND commentAuthor.deleted_at IS NULL',
         )
         .where('post.status = :status', { status: PostStatus.PUBLISHED })
         .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
@@ -867,8 +864,8 @@ export class PostsService {
           `(
             (
               post.listens
-              + COUNT(DISTINCT postReaction.post_reaction_id) * 3
-              + COUNT(DISTINCT postComment.post_comment_id) * 5
+              + COUNT(DISTINCT CASE WHEN reactionUser.user_id IS NOT NULL THEN postReaction.post_reaction_id END) * 3
+              + COUNT(DISTINCT CASE WHEN commentAuthor.user_id IS NOT NULL THEN postComment.post_comment_id END) * 5
             ) / POWER(
               GREATEST(EXTRACT(EPOCH FROM (NOW() - post.created_at)) / 3600 + 2, 2),
               0.8
