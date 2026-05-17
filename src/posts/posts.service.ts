@@ -1491,15 +1491,12 @@ export class PostsService {
           subQuery
             .select('COUNT(postCommentCount.post_comment_id)')
             .from('post_comments', 'postCommentCount')
-            .where('postCommentCount.post_id = post.post_id')
-            .andWhere(
-              `EXISTS (
-                SELECT 1
-                FROM users postCommentAuthor
-                WHERE postCommentAuthor.user_id = postCommentCount.comment_author_id
-                  AND postCommentAuthor.deleted_at IS NULL
-              )`,
-            ),
+            .innerJoin(
+              'users',
+              'postCommentAuthor',
+              'postCommentAuthor.user_id = postCommentCount.comment_author_id AND postCommentAuthor.deleted_at IS NULL',
+            )
+            .where('postCommentCount.post_id = post.post_id'),
         'post_comments_count',
       )
       .setParameter('reactionType', ReactionType.LIKE);
