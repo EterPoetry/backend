@@ -449,24 +449,6 @@ export class ProfileController {
     return this.profileService.deleteMyAvatar(this.requireUser(req).userId);
   }
 
-  @HttpPost('username/:username/follow')
-  @UseGuards(JwtAuthGuard)
-  async followUser(
-    @Req() req: RequestWithUser,
-    @Param('username') username: string,
-  ): Promise<PublicProfileResponseDto> {
-    return this.profileService.followUserByUsername(username, this.requireUser(req).userId);
-  }
-
-  @Delete('username/:username/follow')
-  @UseGuards(JwtAuthGuard)
-  async unfollowUser(
-    @Req() req: RequestWithUser,
-    @Param('username') username: string,
-  ): Promise<PublicProfileResponseDto> {
-    return this.profileService.unfollowUserByUsername(username, this.requireUser(req).userId);
-  }
-
   @Get('username/:username/posts')
   @UseGuards(OptionalJwtAuthGuard)
   async getProfilePublishedPostsByUsername(
@@ -488,6 +470,24 @@ export class ProfileController {
     @Param('username') username: string,
   ): Promise<PublicProfileResponseDto> {
     return this.profileService.getProfileByUsername(username, req.user?.userId ?? null);
+  }
+
+  @HttpPost(':userId/follow')
+  @UseGuards(JwtAuthGuard)
+  async followUser(
+    @Req() req: RequestWithUser,
+    @Param('userId', ParseIntPipe) userId: number,
+  ): Promise<PublicProfileResponseDto> {
+    return this.profileService.followUser(userId, this.requireUser(req).userId);
+  }
+
+  @Delete(':userId/follow')
+  @UseGuards(JwtAuthGuard)
+  async unfollowUser(
+    @Req() req: RequestWithUser,
+    @Param('userId', ParseIntPipe) userId: number,
+  ): Promise<PublicProfileResponseDto> {
+    return this.profileService.unfollowUser(userId, this.requireUser(req).userId);
   }
 
   @Get(':userId/followers')
