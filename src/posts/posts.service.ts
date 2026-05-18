@@ -761,13 +761,20 @@ export class PostsService {
     authorId: number,
     query: GetMyPostsQueryDto,
     requesterUserId: number | null,
-    status?: PostStatus,
+    statuses?: PostStatus | PostStatus[],
   ): Promise<PaginatedPostsResponse> {
     const queryBuilder = this.createPostDetailsQueryBuilder(requesterUserId)
       .where('post.author_id = :authorId', { authorId });
 
-    if (status) {
-      queryBuilder.andWhere('post.status = :status', { status });
+    const effectiveStatuses =
+      typeof statuses === 'undefined'
+        ? query.status
+        : Array.isArray(statuses)
+          ? statuses
+          : [statuses];
+
+    if (effectiveStatuses?.length) {
+      queryBuilder.andWhere('post.status IN (:...statuses)', { statuses: effectiveStatuses });
     }
 
     if (query.search?.trim()) {

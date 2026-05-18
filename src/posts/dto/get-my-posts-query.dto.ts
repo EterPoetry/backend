@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { PostStatus } from '../../common/enums/post-status.enum';
 
 export enum MyPostsSortBy {
   CREATED_AT = 'createdAt',
@@ -20,6 +21,43 @@ export enum PostAuthorTypeFilter {
 }
 
 export class GetMyPostsQueryDto {
+  @ApiPropertyOptional({
+    enum: PostStatus,
+    enumName: 'PostStatus',
+    isArray: true,
+    example: [PostStatus.DRAFT, PostStatus.PROCESSING],
+    description: 'Comma-separated list of statuses, for example: draft,processing',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      const statuses = value
+        .split(',')
+        .map((status) => status.trim())
+        .filter(Boolean);
+
+      return statuses.length > 0 ? statuses : undefined;
+    }
+
+    if (Array.isArray(value)) {
+      const statuses = value
+        .flatMap((item) =>
+          typeof item === 'string'
+            ? item
+                .split(',')
+                .map((status) => status.trim())
+                .filter(Boolean)
+            : [],
+        );
+
+      return statuses.length > 0 ? statuses : undefined;
+    }
+
+    return value;
+  })
+  @IsEnum(PostStatus, { each: true })
+  status?: PostStatus[];
+
   @ApiPropertyOptional({ maxLength: 200 })
   @IsOptional()
   @IsString()
