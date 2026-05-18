@@ -1,5 +1,5 @@
 export const AUDIO_ANALYSIS_VERSION = 1 as const;
-export const AUDIO_ANALYSIS_FRAME_MS = 80;
+export const AUDIO_ANALYSIS_FRAME_MS = 50;
 export const AUDIO_ANALYSIS_FEATURES = ['energy', 'peak', 'low', 'mid', 'high', 'zcr'] as const;
 
 export type AudioAnalysisFeature = (typeof AUDIO_ANALYSIS_FEATURES)[number];
