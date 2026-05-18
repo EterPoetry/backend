@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, InternalServerErrorException } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { execFile } from 'child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
@@ -8,9 +9,25 @@ import { promisify } from 'util';
 import { StoredFile } from '../storage/file-storage.service';
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_NORMALIZATION_TARGET_LUFS = -16;
+const DEFAULT_NORMALIZATION_TARGET_LRA = 7;
+const DEFAULT_NORMALIZATION_TARGET_TRUE_PEAK_DB = -1.5;
+const DEFAULT_NORMALIZATION_MAX_BOOST_DB = 12;
+
+interface LoudnessAnalysisResult {
+  inputIntegratedLufs: number;
+  inputTruePeakDb: number;
+  inputLra: number;
+  inputThresholdDb: number;
+  targetOffsetDb: number;
+}
 
 @Injectable()
 export class PostAudioTranscodingService {
+  private readonly logger = new Logger(PostAudioTranscodingService.name);
+
+  constructor(private readonly configService: ConfigService) {}
+
   async ensureDurationWithinLimit(
     audio: StoredFile,
     maxDurationMinutes: number,
@@ -44,6 +61,14 @@ export class PostAudioTranscodingService {
 
     try {
       await writeFile(inputPath, audio.buffer);
+      const loudnessAnalysis = await this.measureLoudness(inputPath);
+      const targetIntegratedLufs = this.getEffectiveTargetIntegratedLufs(
+        loudnessAnalysis.inputIntegratedLufs,
+      );
+      const normalizationFilter = this.buildNormalizationFilter(
+        targetIntegratedLufs,
+        loudnessAnalysis,
+      );
 
       await execFileAsync('ffmpeg', [
         '-y',
@@ -52,6 +77,8 @@ export class PostAudioTranscodingService {
         '-vn',
         '-map_metadata',
         '-1',
+        '-af',
+        normalizationFilter,
         '-c:a',
         'libopus',
         '-b:a',
@@ -62,6 +89,10 @@ export class PostAudioTranscodingService {
         'audio',
         outputPath,
       ]);
+
+      this.logger.log(
+        `Normalized post audio to ${targetIntegratedLufs.toFixed(1)} LUFS (input ${loudnessAnalysis.inputIntegratedLufs.toFixed(1)} LUFS, true peak ${loudnessAnalysis.inputTruePeakDb.toFixed(1)} dBTP).`,
+      );
 
       return {
         buffer: await readFile(outputPath),
@@ -94,6 +125,101 @@ export class PostAudioTranscodingService {
     return durationSeconds;
   }
 
+  private async measureLoudness(filePath: string): Promise<LoudnessAnalysisResult> {
+    const targetIntegratedLufs = this.getConfiguredNumber(
+      'POST_AUDIO_NORMALIZATION_TARGET_LUFS',
+      DEFAULT_NORMALIZATION_TARGET_LUFS,
+    );
+    const targetLra = this.getConfiguredNumber(
+      'POST_AUDIO_NORMALIZATION_TARGET_LRA',
+      DEFAULT_NORMALIZATION_TARGET_LRA,
+    );
+    const targetTruePeakDb = this.getConfiguredNumber(
+      'POST_AUDIO_NORMALIZATION_TARGET_TRUE_PEAK_DB',
+      DEFAULT_NORMALIZATION_TARGET_TRUE_PEAK_DB,
+    );
+    const analysisFilter =
+      `loudnorm=I=${targetIntegratedLufs}:LRA=${targetLra}:TP=${targetTruePeakDb}:print_format=json`;
+
+    try {
+      const { stderr } = await execFileAsync('ffmpeg', [
+        '-hide_banner',
+        '-nostats',
+        '-i',
+        filePath,
+        '-vn',
+        '-map_metadata',
+        '-1',
+        '-af',
+        analysisFilter,
+        '-f',
+        'null',
+        '-',
+      ]);
+
+      return this.parseLoudnessAnalysis(stderr);
+    } catch (error) {
+      throw this.wrapCommandError(error, 'Unable to analyze audio loudness.');
+    }
+  }
+
+  private parseLoudnessAnalysis(stderr: string): LoudnessAnalysisResult {
+    const jsonMatch = stderr.match(/\{[\s\S]*\}\s*$/);
+    if (!jsonMatch) {
+      throw new Error('Missing loudnorm analysis output.');
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+
+    return {
+      inputIntegratedLufs: this.parseRequiredNumber(parsed.input_i, 'input_i'),
+      inputTruePeakDb: this.parseRequiredNumber(parsed.input_tp, 'input_tp'),
+      inputLra: this.parseRequiredNumber(parsed.input_lra, 'input_lra'),
+      inputThresholdDb: this.parseRequiredNumber(parsed.input_thresh, 'input_thresh'),
+      targetOffsetDb: this.parseRequiredNumber(parsed.target_offset, 'target_offset'),
+    };
+  }
+
+  private buildNormalizationFilter(
+    targetIntegratedLufs: number,
+    loudnessAnalysis: LoudnessAnalysisResult,
+  ): string {
+    const targetLra = this.getConfiguredNumber(
+      'POST_AUDIO_NORMALIZATION_TARGET_LRA',
+      DEFAULT_NORMALIZATION_TARGET_LRA,
+    );
+    const targetTruePeakDb = this.getConfiguredNumber(
+      'POST_AUDIO_NORMALIZATION_TARGET_TRUE_PEAK_DB',
+      DEFAULT_NORMALIZATION_TARGET_TRUE_PEAK_DB,
+    );
+
+    return [
+      `loudnorm=I=${targetIntegratedLufs}`,
+      `LRA=${targetLra}`,
+      `TP=${targetTruePeakDb}`,
+      `measured_I=${loudnessAnalysis.inputIntegratedLufs}`,
+      `measured_TP=${loudnessAnalysis.inputTruePeakDb}`,
+      `measured_LRA=${loudnessAnalysis.inputLra}`,
+      `measured_thresh=${loudnessAnalysis.inputThresholdDb}`,
+      `offset=${loudnessAnalysis.targetOffsetDb}`,
+      'linear=true',
+      'print_format=summary',
+    ].join(':');
+  }
+
+  private getEffectiveTargetIntegratedLufs(inputIntegratedLufs: number): number {
+    const configuredTargetLufs = this.getConfiguredNumber(
+      'POST_AUDIO_NORMALIZATION_TARGET_LUFS',
+      DEFAULT_NORMALIZATION_TARGET_LUFS,
+    );
+    const maxBoostDb = this.getConfiguredNumber(
+      'POST_AUDIO_NORMALIZATION_MAX_BOOST_DB',
+      DEFAULT_NORMALIZATION_MAX_BOOST_DB,
+    );
+
+    return Math.min(configuredTargetLufs, inputIntegratedLufs + maxBoostDb);
+  }
+
   private async createWorkingDirectory(): Promise<string> {
     const baseDirectory = join(tmpdir(), 'eter-poetry-audio');
     await mkdir(baseDirectory, { recursive: true });
@@ -117,5 +243,28 @@ export class PostAudioTranscodingService {
       'code' in error &&
       (error as { code?: string }).code === 'ENOENT'
     );
+  }
+
+  private parseRequiredNumber(value: unknown, fieldName: string): number {
+    if (typeof value !== 'string' && typeof value !== 'number') {
+      throw new Error(`Missing loudnorm field ${fieldName}.`);
+    }
+
+    const parsed = Number.parseFloat(String(value));
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`Invalid loudnorm field ${fieldName}.`);
+    }
+
+    return parsed;
+  }
+
+  private getConfiguredNumber(key: string, defaultValue: number): number {
+    const rawValue = this.configService.get<string>(key);
+    if (!rawValue) {
+      return defaultValue;
+    }
+
+    const parsed = Number.parseFloat(rawValue);
+    return Number.isFinite(parsed) ? parsed : defaultValue;
   }
 }
