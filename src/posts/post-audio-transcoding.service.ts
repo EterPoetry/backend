@@ -174,7 +174,7 @@ export class PostAudioTranscodingService {
   }
 
   private parseLoudnessAnalysis(stderr: string): LoudnessAnalysisResult {
-    const jsonMatch = stderr.match(/\{[\s\S]*}\s*$/);
+    const jsonMatch = stderr.match(/\{[\s\S]*}/);
     if (!jsonMatch) {
       throw new Error('Missing loudnorm analysis output.');
     }
