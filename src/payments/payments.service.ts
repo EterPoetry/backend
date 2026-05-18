@@ -403,14 +403,14 @@ export class PaymentsService implements OnModuleInit {
         subscription.walletId = dto.walletData.walletId;
       }
 
-      if (dto.walletData?.status?.toLowerCase() === 'created' && dto.walletData.cardToken) {
+      if (this.shouldLinkCard(dto, normalizedStatus)) {
         this.logger.log(
-          `Replacing linked card subscriptionId=${subscription.subscriptionId} newCardToken=${this.maskToken(dto.walletData.cardToken)} paymentSystem=${dto.paymentInfo?.paymentSystem ?? 'unknown'}`,
+          `Replacing linked card subscriptionId=${subscription.subscriptionId} newCardToken=${this.maskToken(dto.walletData!.cardToken!)} paymentSystem=${dto.paymentInfo?.paymentSystem ?? 'unknown'} walletStatus=${dto.walletData?.status ?? 'unknown'} transactionStatus=${normalizedStatus}`,
         );
         await this.replaceSubscriptionCard(
           manager,
           subscription,
-          dto.walletData.cardToken,
+          dto.walletData!.cardToken!,
           dto.paymentInfo?.paymentSystem,
           dto.paymentInfo?.maskedPan,
         );
@@ -821,6 +821,22 @@ export class PaymentsService implements OnModuleInit {
       default:
         throw new BadRequestException(`Unsupported transaction status: ${status}`);
     }
+  }
+
+  private shouldLinkCard(
+    dto: NormalizedInvoiceStatus,
+    normalizedStatus: TransactionStatus,
+  ): boolean {
+    const cardToken = dto.walletData?.cardToken?.trim();
+    if (!cardToken) {
+      return false;
+    }
+
+    return ![
+      TransactionStatus.FAILURE,
+      TransactionStatus.REVERSED,
+      TransactionStatus.EXPIRED,
+    ].includes(normalizedStatus);
   }
 
   private async replaceSubscriptionCard(
