@@ -61,10 +61,21 @@ export class PostAudioTranscodingService {
 
     try {
       await writeFile(inputPath, audio.buffer);
-      const loudnessAnalysis = await this.measureLoudness(inputPath);
-      const targetIntegratedLufs = this.getEffectiveTargetIntegratedLufs(
-        loudnessAnalysis.inputIntegratedLufs,
+      const configuredTargetIntegratedLufs = this.getConfiguredNumber(
+        'POST_AUDIO_NORMALIZATION_TARGET_LUFS',
+        DEFAULT_NORMALIZATION_TARGET_LUFS,
       );
+      const initialLoudnessAnalysis = await this.measureLoudness(
+        inputPath,
+        configuredTargetIntegratedLufs,
+      );
+      const targetIntegratedLufs = this.getEffectiveTargetIntegratedLufs(
+        initialLoudnessAnalysis.inputIntegratedLufs,
+      );
+      const loudnessAnalysis =
+        targetIntegratedLufs === configuredTargetIntegratedLufs
+          ? initialLoudnessAnalysis
+          : await this.measureLoudness(inputPath, targetIntegratedLufs);
       const normalizationFilter = this.buildNormalizationFilter(
         targetIntegratedLufs,
         loudnessAnalysis,
@@ -125,11 +136,10 @@ export class PostAudioTranscodingService {
     return durationSeconds;
   }
 
-  private async measureLoudness(filePath: string): Promise<LoudnessAnalysisResult> {
-    const targetIntegratedLufs = this.getConfiguredNumber(
-      'POST_AUDIO_NORMALIZATION_TARGET_LUFS',
-      DEFAULT_NORMALIZATION_TARGET_LUFS,
-    );
+  private async measureLoudness(
+    filePath: string,
+    targetIntegratedLufs: number,
+  ): Promise<LoudnessAnalysisResult> {
     const targetLra = this.getConfiguredNumber(
       'POST_AUDIO_NORMALIZATION_TARGET_LRA',
       DEFAULT_NORMALIZATION_TARGET_LRA,
@@ -164,7 +174,7 @@ export class PostAudioTranscodingService {
   }
 
   private parseLoudnessAnalysis(stderr: string): LoudnessAnalysisResult {
-    const jsonMatch = stderr.match(/\{[\s\S]*\}\s*$/);
+    const jsonMatch = stderr.match(/\{[\s\S]*}\s*$/);
     if (!jsonMatch) {
       throw new Error('Missing loudnorm analysis output.');
     }
@@ -233,6 +243,11 @@ export class PostAudioTranscodingService {
       );
     }
 
+    const details = this.getCommandErrorDetails(error);
+    if (details) {
+      return new InternalServerErrorException(`${fallbackMessage} ${details}`);
+    }
+
     return new InternalServerErrorException(fallbackMessage);
   }
 
@@ -266,5 +281,21 @@ export class PostAudioTranscodingService {
 
     const parsed = Number.parseFloat(rawValue);
     return Number.isFinite(parsed) ? parsed : defaultValue;
+  }
+
+  private getCommandErrorDetails(error: unknown): string | null {
+    if (typeof error !== 'object' || error === null) {
+      return null;
+    }
+
+    const stderr =
+      'stderr' in error && typeof error.stderr === 'string' ? error.stderr.trim() : null;
+    if (stderr) {
+      return stderr;
+    }
+
+    const message =
+      'message' in error && typeof error.message === 'string' ? error.message.trim() : null;
+    return message || null;
   }
 }
