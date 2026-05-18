@@ -452,7 +452,7 @@ export class PostsService {
 
     if (query.search?.trim()) {
       rankingQueryBuilder.andWhere(
-        `(COALESCE(post.title, '') ILIKE :search OR COALESCE(post.description, '') ILIKE :search OR COALESCE(post.text, '') ILIKE :search)`,
+        `(COALESCE(post.title, '') ILIKE :search OR COALESCE(post.description, '') ILIKE :search OR COALESCE(post.text, '') ILIKE :search OR COALESCE(post.origin_author_name, '') ILIKE :search)`,
         { search: `%${query.search.trim()}%` },
       );
     }
@@ -779,7 +779,7 @@ export class PostsService {
 
     if (query.search?.trim()) {
       queryBuilder.andWhere(
-        `(COALESCE(post.title, '') ILIKE :search OR COALESCE(post.description, '') ILIKE :search OR COALESCE(post.text, '') ILIKE :search)`,
+        `(COALESCE(post.title, '') ILIKE :search OR COALESCE(post.description, '') ILIKE :search OR COALESCE(post.text, '') ILIKE :search OR COALESCE(post.origin_author_name, '') ILIKE :search)`,
         { search: `%${query.search.trim()}%` },
       );
     }
