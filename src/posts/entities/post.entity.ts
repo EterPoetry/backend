@@ -5,6 +5,7 @@ import {
   JoinColumn,
   ManyToOne,
   OneToMany,
+  OneToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -17,6 +18,8 @@ import { PostComplaint } from '../../complaints/entities/post-complaint.entity';
 import { Notification } from '../../notifications/entities/notification.entity';
 import { PostStatus } from '../../common/enums/post-status.enum';
 import { PopularPostSnapshotItem } from './popular-post-snapshot-item.entity';
+import { AudioAnalysisStatus } from '../../common/enums/audio-analysis-status.enum';
+import { PostAudioAnalysis } from './post-audio-analysis.entity';
 
 @Entity({ name: 'posts' })
 export class Post {
@@ -58,6 +61,14 @@ export class Post {
   })
   status: PostStatus;
 
+  @Column({
+    name: 'audio_analysis_status',
+    type: 'enum',
+    enum: AudioAnalysisStatus,
+    default: AudioAnalysisStatus.PENDING,
+  })
+  audioAnalysisStatus: AudioAnalysisStatus;
+
   @ManyToOne(() => User, (user) => user.posts, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'author_id' })
   author: User;
@@ -91,6 +102,9 @@ export class Post {
 
   @OneToMany(() => PopularPostSnapshotItem, (snapshotItem) => snapshotItem.post)
   popularSnapshotItems: PopularPostSnapshotItem[];
+
+  @OneToOne(() => PostAudioAnalysis, (audioAnalysis) => audioAnalysis.post)
+  audioAnalysis?: PostAudioAnalysis | null;
 
   likesCount?: number;
 

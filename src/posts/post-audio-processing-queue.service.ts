@@ -7,6 +7,9 @@ import { Post } from './entities/post.entity';
 import { PostAudioProcessingJob } from './entities/post-audio-processing-job.entity';
 import { PostAudioStorageService } from './post-audio-storage.service';
 import { PostAudioTranscodingService } from './post-audio-transcoding.service';
+import { PostAudioAnalysisService } from './post-audio-analysis.service';
+import { AudioAnalysisStatus } from '../common/enums/audio-analysis-status.enum';
+import { AudioAnalysisV1Dto } from './audio-analysis.types';
 import { PostsService } from './posts.service';
 
 interface ClaimedJobRow {
@@ -49,6 +52,7 @@ export class PostAudioProcessingQueueService implements OnModuleInit, OnModuleDe
     private readonly postsService: PostsService,
     private readonly postAudioStorageService: PostAudioStorageService,
     private readonly postAudioTranscodingService: PostAudioTranscodingService,
+    private readonly postAudioAnalysisService: PostAudioAnalysisService,
   ) {
     this.maxConcurrency = this.getPositiveIntegerConfig('POST_AUDIO_PROCESSING_CONCURRENCY', 2);
     this.pollIntervalMs = this.getPositiveIntegerConfig('POST_AUDIO_PROCESSING_POLL_MS', 5000);
@@ -102,6 +106,8 @@ export class PostAudioProcessingQueueService implements OnModuleInit, OnModuleDe
   private async processJob(job: ClaimedJob): Promise<void> {
     let post: Post | null = null;
     let processedAudioFileName: string | null = null;
+    let audioAnalysis: AudioAnalysisV1Dto | null = null;
+    let audioAnalysisStatus = AudioAnalysisStatus.FAILED;
 
     try {
       post = await this.postsService.getPostById(job.postId);
@@ -118,9 +124,26 @@ export class PostAudioProcessingQueueService implements OnModuleInit, OnModuleDe
         transcodedAudio,
       );
 
+      await this.dataSource.getRepository(Post).update(job.postId, {
+        audioAnalysisStatus: AudioAnalysisStatus.PROCESSING,
+      });
+
+      try {
+        audioAnalysis = await this.postAudioAnalysisService.analyzeStoredAudio(transcodedAudio);
+        audioAnalysisStatus = AudioAnalysisStatus.READY;
+      } catch (error) {
+        audioAnalysis = null;
+        audioAnalysisStatus = AudioAnalysisStatus.FAILED;
+        this.logger.warn(
+          `Post audio analysis failed for post ${job.postId}: ${this.getErrorMessage(error)}`,
+        );
+      }
+
       const previousSourceAudioFileName = await this.postsService.markPostProcessingCompleted(
         post,
         processedAudioFileName,
+        audioAnalysis,
+        audioAnalysisStatus,
       );
       await this.markJobCompleted(job.jobId);
       await this.deleteSourceAudioSafely(previousSourceAudioFileName, job.postId);

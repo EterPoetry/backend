@@ -6,6 +6,7 @@ import { PopularPostSnapshotItem } from './entities/popular-post-snapshot-item.e
 import { PostTextPart } from './entities/post-text-part.entity';
 import { PostAudioProcessingJob } from './entities/post-audio-processing-job.entity';
 import { PostListenSession } from './entities/post-listen-session.entity';
+import { PostAudioAnalysis } from './entities/post-audio-analysis.entity';
 import { StorageModule } from '../storage/storage.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { CommentsModule } from '../comments/comments.module';
@@ -17,6 +18,7 @@ import { PostsService } from './posts.service';
 import { PostAudioStorageService } from './post-audio-storage.service';
 import { PostAudioTranscodingService } from './post-audio-transcoding.service';
 import { PostAudioProcessingQueueService } from './post-audio-processing-queue.service';
+import { PostAudioAnalysisService } from './post-audio-analysis.service';
 
 @Module({
   imports: [
@@ -26,6 +28,7 @@ import { PostAudioProcessingQueueService } from './post-audio-processing-queue.s
       PopularPostSnapshotItem,
       PostTextPart,
       PostAudioProcessingJob,
+      PostAudioAnalysis,
       PostListenSession,
       PostReaction,
     ]),
@@ -40,6 +43,7 @@ import { PostAudioProcessingQueueService } from './post-audio-processing-queue.s
     PostsService,
     PostAudioStorageService,
     PostAudioTranscodingService,
+    PostAudioAnalysisService,
     PostAudioProcessingQueueService,
   ],
   exports: [TypeOrmModule, PostsService],

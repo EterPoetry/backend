@@ -4,6 +4,7 @@ import { PopularPostSnapshot } from '../posts/entities/popular-post-snapshot.ent
 import { PopularPostSnapshotItem } from '../posts/entities/popular-post-snapshot-item.entity';
 import { PostTextPart } from '../posts/entities/post-text-part.entity';
 import { PostAudioProcessingJob } from '../posts/entities/post-audio-processing-job.entity';
+import { PostAudioAnalysis } from '../posts/entities/post-audio-analysis.entity';
 import { PostListenSession } from '../posts/entities/post-listen-session.entity';
 import { Category } from '../categories/entities/category.entity';
 import { PostCategory } from '../categories/entities/post-category.entity';
@@ -29,6 +30,7 @@ export const ENTITIES = [
   PopularPostSnapshotItem,
   PostTextPart,
   PostAudioProcessingJob,
+  PostAudioAnalysis,
   PostListenSession,
   Category,
   PostCategory,

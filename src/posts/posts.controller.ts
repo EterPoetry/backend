@@ -66,6 +66,7 @@ import {
 } from './posts.service';
 import { PostAudioProcessingQueueService } from './post-audio-processing-queue.service';
 import { UploadedPostAudio } from './post-audio-storage.service';
+import { AudioAnalysisV1Dto } from './audio-analysis.types';
 
 const { memoryStorage } = require('multer');
 const GUEST_SESSION_COOKIE_NAME = 'guestSessionId';
@@ -182,6 +183,48 @@ class PostTextSynchronizationItemResponseDto implements PostTextSynchronizationI
   audioStartMomentMs: number;
 }
 
+class AudioAnalysisResponseDto implements AudioAnalysisV1Dto {
+  @ApiProperty({ example: 1 })
+  version: 1;
+
+  @ApiProperty()
+  durationMs: number;
+
+  @ApiProperty()
+  frameMs: number;
+
+  @ApiProperty({ type: [String], example: ['energy', 'peak', 'low', 'mid', 'high', 'zcr'] })
+  features: Array<'energy' | 'peak' | 'low' | 'mid' | 'high' | 'zcr'>;
+
+  @ApiProperty()
+  frames: string;
+
+  @ApiProperty()
+  waveform: string;
+
+  @ApiProperty({
+    type: 'array',
+    items: {
+      type: 'array',
+      items: { type: 'number' },
+      minItems: 2,
+      maxItems: 2,
+    },
+  })
+  accents: Array<[number, number]>;
+
+  @ApiProperty({
+    type: 'array',
+    items: {
+      type: 'array',
+      items: { type: 'number' },
+      minItems: 2,
+      maxItems: 2,
+    },
+  })
+  silences: Array<[number, number]>;
+}
+
 class PostResponseDto implements PostResponse {
   @ApiProperty({
     type: () => PostAuthorProfileResponseDto,
@@ -229,6 +272,9 @@ class PostResponseDto implements PostResponse {
 
   @ApiPropertyOptional({ type: [PostTextSynchronizationItemResponseDto] })
   textSynchronization?: PostTextSynchronizationItemResponseDto[];
+
+  @ApiPropertyOptional({ type: () => AudioAnalysisResponseDto, nullable: true })
+  audioAnalysis?: AudioAnalysisResponseDto | null;
 
   @ApiProperty({ type: [CategoryResponseDto] })
   categories: CategoryResponseDto[];

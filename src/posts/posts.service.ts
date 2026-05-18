@@ -11,6 +11,7 @@ import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { PostAudioProcessingJobStatus } from '../common/enums/post-audio-processing-job-status.enum';
+import { AudioAnalysisStatus } from '../common/enums/audio-analysis-status.enum';
 import { Post } from './entities/post.entity';
 import { buildPostSlug } from './post-slug.util';
 import { PostAudioProcessingJob } from './entities/post-audio-processing-job.entity';
@@ -47,6 +48,9 @@ import { ReactionType } from '../common/enums/reaction-type.enum';
 import { PostReaction } from '../reactions/entities/post-reaction.entity';
 import { PopularPostSnapshot } from './entities/popular-post-snapshot.entity';
 import { PopularPostSnapshotItem } from './entities/popular-post-snapshot-item.entity';
+import { PostAudioAnalysis } from './entities/post-audio-analysis.entity';
+import { PostAudioAnalysisService } from './post-audio-analysis.service';
+import { AudioAnalysisV1Dto } from './audio-analysis.types';
 
 export interface PostAuthorProfileResponse {
   userId: number;
@@ -78,6 +82,7 @@ export interface PostResponse {
   isLiked: boolean;
   originAuthorName: string | null;
   textSynchronization?: PostTextSynchronizationItemResponse[];
+  audioAnalysis?: AudioAnalysisV1Dto | null;
   categories: CategoryResponse[];
   authorId: number;
   author: PostAuthorProfileResponse;
@@ -196,8 +201,11 @@ export class PostsService {
     private readonly popularPostSnapshotsRepository: Repository<PopularPostSnapshot>,
     @InjectRepository(PopularPostSnapshotItem)
     private readonly popularPostSnapshotItemsRepository: Repository<PopularPostSnapshotItem>,
+    @InjectRepository(PostAudioAnalysis)
+    private readonly postAudioAnalysisRepository: Repository<PostAudioAnalysis>,
     private readonly postAudioStorageService: PostAudioStorageService,
     private readonly postAudioTranscodingService: PostAudioTranscodingService,
+    private readonly postAudioAnalysisService: PostAudioAnalysisService,
     private readonly publicConfigService: PublicConfigService,
     private readonly fileStorageService: FileStorageService,
   ) {}
@@ -222,6 +230,7 @@ export class PostsService {
             listens: 0,
             originAuthorName: null,
             status: PostStatus.PROCESSING,
+            audioAnalysisStatus: AudioAnalysisStatus.PENDING,
             authorId,
             slug: '',
           }),
@@ -261,7 +270,10 @@ export class PostsService {
 
   async getPostDetails(postId: number, requesterUserId: number | null): Promise<PostResponse> {
     const post = await this.requireReadablePost(postId, requesterUserId);
-    return this.buildPostResponse(post);
+    return this.buildPostResponse(post, {
+      audioAnalysis: await this.getPostAudioAnalysisDto(post.postId),
+      includeAudioAnalysis: true,
+    });
   }
 
   async getMyPosts(
@@ -962,7 +974,7 @@ export class PostsService {
       const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as
         | FeedPostsCursorPayload
         | null;
-      if (!parsed || typeof parsed.createdAt !== 'string' || !Number.isInteger(parsed.postId)) {
+      if (!parsed || !Number.isInteger(parsed.postId)) {
         throw new Error('Invalid feed cursor payload.');
       }
 
@@ -975,6 +987,8 @@ export class PostsService {
   async markPostProcessingCompleted(
     post: Post,
     processedAudioFileName: string,
+    audioAnalysis: AudioAnalysisV1Dto | null,
+    audioAnalysisStatus: AudioAnalysisStatus,
   ): Promise<string | null> {
     const previousAudioFileName = post.audioFileName;
     const previousSourceAudioFileName = post.sourceAudioFileName;
@@ -986,10 +1000,20 @@ export class PostsService {
       ? PostStatus.PUBLISHED
       : PostStatus.DRAFT;
 
-    await this.postsRepository.update(post.postId, {
-      audioFileName: processedAudioFileName,
-      sourceAudioFileName: null,
-      status: nextStatus,
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(Post).update(post.postId, {
+        audioFileName: processedAudioFileName,
+        sourceAudioFileName: null,
+        status: nextStatus,
+        audioAnalysisStatus,
+      });
+
+      if (audioAnalysis) {
+        await this.savePostAudioAnalysis(manager, post.postId, audioAnalysis);
+        return;
+      }
+
+      await manager.getRepository(PostAudioAnalysis).delete({ postId: post.postId });
     });
 
     if (previousAudioFileName && previousAudioFileName !== processedAudioFileName) {
@@ -997,6 +1021,45 @@ export class PostsService {
     }
 
     return previousSourceAudioFileName;
+  }
+
+  async reanalyzePostAudio(postId: number): Promise<void> {
+    const post = await this.postsRepository.findOne({
+      where: { postId },
+      select: {
+        postId: true,
+        audioFileName: true,
+      },
+    });
+
+    if (!post) {
+      throw new NotFoundException('Post not found.');
+    }
+
+    if (!post.audioFileName) {
+      throw new BadRequestException('Post audio is not available for analysis.');
+    }
+
+    await this.postsRepository.update(postId, {
+      audioAnalysisStatus: AudioAnalysisStatus.PROCESSING,
+    });
+
+    try {
+      const audio = await this.postAudioStorageService.readAudio(post.audioFileName);
+      const analysis = await this.postAudioAnalysisService.analyzeStoredAudio(audio);
+
+      await this.dataSource.transaction(async (manager) => {
+        await this.savePostAudioAnalysis(manager, postId, analysis);
+        await manager.getRepository(Post).update(postId, {
+          audioAnalysisStatus: AudioAnalysisStatus.READY,
+        });
+      });
+    } catch (error) {
+      await this.postsRepository.update(postId, {
+        audioAnalysisStatus: AudioAnalysisStatus.FAILED,
+      });
+      throw error;
+    }
   }
 
   async updatePost(
@@ -1144,8 +1207,10 @@ export class PostsService {
           sourceAudioFileName,
           audioDurationSeconds,
           status: PostStatus.PROCESSING,
+          audioAnalysisStatus: AudioAnalysisStatus.PENDING,
         });
         await manager.getRepository(PostTextPart).delete({ postId: post.postId });
+        await manager.getRepository(PostAudioAnalysis).delete({ postId: post.postId });
 
         await manager.getRepository(PostAudioProcessingJob).delete({ postId: post.postId });
         await manager.getRepository(PostAudioProcessingJob).save(
@@ -1200,9 +1265,15 @@ export class PostsService {
 
   buildPostResponse(
     post: Post,
-    options: { includeTextSynchronization?: boolean; isLiked?: boolean } = {},
+    options: {
+      includeTextSynchronization?: boolean;
+      includeAudioAnalysis?: boolean;
+      audioAnalysis?: AudioAnalysisV1Dto | null;
+      isLiked?: boolean;
+    } = {},
   ): PostResponse {
     const includeTextSynchronization = options.includeTextSynchronization ?? true;
+    const includeAudioAnalysis = options.includeAudioAnalysis ?? false;
     const isLiked = options.isLiked ?? Boolean(post.requesterReactionId);
 
     return {
@@ -1231,6 +1302,7 @@ export class PostsService {
               })),
           }
         : {}),
+      ...(includeAudioAnalysis ? { audioAnalysis: options.audioAnalysis ?? null } : {}),
       categories: (post.postCategories ?? [])
         .map((postCategory) => postCategory.category)
         .filter((category): category is Category => Boolean(category))
@@ -1240,6 +1312,47 @@ export class PostsService {
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
     };
+  }
+
+  private async getPostAudioAnalysisDto(postId: number): Promise<AudioAnalysisV1Dto | null> {
+    const audioAnalysis = await this.postAudioAnalysisRepository.findOne({
+      where: { postId },
+    });
+
+    if (!audioAnalysis) {
+      return null;
+    }
+
+    return {
+      version: audioAnalysis.version as 1,
+      durationMs: audioAnalysis.durationMs,
+      frameMs: audioAnalysis.frameMs,
+      features: audioAnalysis.features,
+      frames: audioAnalysis.frames.toString('base64'),
+      waveform: audioAnalysis.waveform.toString('base64'),
+      accents: audioAnalysis.accents,
+      silences: audioAnalysis.silences,
+    };
+  }
+
+  private async savePostAudioAnalysis(
+    manager: EntityManager,
+    postId: number,
+    audioAnalysis: AudioAnalysisV1Dto,
+  ): Promise<void> {
+    await manager.getRepository(PostAudioAnalysis).save(
+      manager.getRepository(PostAudioAnalysis).create({
+        postId,
+        version: audioAnalysis.version,
+        durationMs: audioAnalysis.durationMs,
+        frameMs: audioAnalysis.frameMs,
+        features: audioAnalysis.features,
+        frames: Buffer.from(audioAnalysis.frames, 'base64'),
+        waveform: Buffer.from(audioAnalysis.waveform, 'base64'),
+        accents: audioAnalysis.accents,
+        silences: audioAnalysis.silences,
+      }),
+    );
   }
 
   private mapSortByToColumn(sortBy: MyPostsSortBy): string {
@@ -1459,7 +1572,7 @@ export class PostsService {
   }
 
   private normalizePostText(value: string): string {
-    return value.replace(/(\r?\n)(?:[ \t]*(?:\r?\n))+/g, '$1$1');
+    return value.replace(/(\r?\n)(?:[ \t]*\r?\n)+/g, '$1$1');
   }
 
   private getTrackDurationMs(audioDurationSeconds: number | null): number {
