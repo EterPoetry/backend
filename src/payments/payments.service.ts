@@ -230,7 +230,17 @@ export class PaymentsService implements OnModuleInit {
     userId: number,
     query: GetSubscriptionTransactionsQueryDto,
   ): Promise<PaginatedTransactionsResponse> {
-    const subscription = await this.requireSubscription(userId);
+    const subscription = await this.subscriptionsRepository.findOne({
+      where: { userId },
+    });
+
+    if (!subscription) {
+      return {
+        items: [],
+        total: 0,
+        offset: query.offset,
+      };
+    }
 
     const [items, total] = await this.transactionsRepository.findAndCount({
       where: { subscriptionId: subscription.subscriptionId },
