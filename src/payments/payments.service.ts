@@ -120,10 +120,13 @@ export class PaymentsService implements OnModuleInit {
       amount: PREMIUM_PRICE_AMOUNT_USD_MINOR,
       ccy: PREMIUM_PRICE_CURRENCY_NUMERIC,
       paymentType: 'debit',
+      redirectUrl: this.getPaymentsRedirectUrl('checkout'),
       validity: INVOICE_VALIDITY_SECONDS,
       webHookUrl: this.getPaymentsWebhookUrl(),
-      saveCardData: { saveCard: true },
-      walletId: subscription.walletId,
+      saveCardData: {
+        saveCard: true,
+        walletId: subscription.walletId,
+      },
       metadata: {
         userId,
         subscriptionId: subscription.subscriptionId,
@@ -259,12 +262,16 @@ export class PaymentsService implements OnModuleInit {
       amount: CARD_UPDATE_AMOUNT_UAH_MINOR,
       ccy: CARD_UPDATE_CURRENCY_NUMERIC,
       paymentType: 'hold',
+      redirectUrl: this.getPaymentsRedirectUrl('update_card'),
       validity: INVOICE_VALIDITY_SECONDS,
       webHookUrl: this.getPaymentsWebhookUrl(),
-      saveCardData: { saveCard: true },
-      walletId: subscription.walletId,
+      saveCardData: {
+        saveCard: true,
+        walletId: subscription.walletId,
+      },
       metadata: {
         userId,
+
         subscriptionId: subscription.subscriptionId,
         action: 'update_card',
       },
@@ -403,14 +410,14 @@ export class PaymentsService implements OnModuleInit {
         subscription.walletId = dto.walletData.walletId;
       }
 
-      if (this.shouldLinkCard(dto, normalizedStatus)) {
+      if (dto.walletData?.status?.toLowerCase() === 'created' && dto.walletData.cardToken) {
         this.logger.log(
-          `Replacing linked card subscriptionId=${subscription.subscriptionId} newCardToken=${this.maskToken(dto.walletData!.cardToken!)} paymentSystem=${dto.paymentInfo?.paymentSystem ?? 'unknown'} walletStatus=${dto.walletData?.status ?? 'unknown'} transactionStatus=${normalizedStatus}`,
+          `Replacing linked card subscriptionId=${subscription.subscriptionId} newCardToken=${this.maskToken(dto.walletData.cardToken)} paymentSystem=${dto.paymentInfo?.paymentSystem ?? 'unknown'} walletStatus=${dto.walletData.status} transactionStatus=${normalizedStatus}`,
         );
         await this.replaceSubscriptionCard(
           manager,
           subscription,
-          dto.walletData!.cardToken!,
+          dto.walletData.cardToken,
           dto.paymentInfo?.paymentSystem,
           dto.paymentInfo?.maskedPan,
         );
@@ -694,6 +701,29 @@ export class PaymentsService implements OnModuleInit {
     }
   }
 
+  private getPaymentsRedirectUrl(action: 'checkout' | 'update_card'): string {
+    const value = this.configService
+      .get<string>('SUBSCRIPTION_CHECKOUT_REDIRECT_URL')
+      ?.trim();
+
+    if (!value) {
+      throw new BadRequestException('SUBSCRIPTION_CHECKOUT_REDIRECT_URL is not configured.');
+    }
+
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new BadRequestException(
+        'SUBSCRIPTION_CHECKOUT_REDIRECT_URL must be a valid absolute URL.',
+      );
+    }
+
+    url.searchParams.set('paymentFlow', 'subscription');
+    url.searchParams.set('paymentAction', action);
+    return url.toString();
+  }
+
   private async requireSubscription(userId: number): Promise<Subscription> {
     const subscription = await this.subscriptionsRepository.findOne({
       where: { userId },
@@ -821,22 +851,6 @@ export class PaymentsService implements OnModuleInit {
       default:
         throw new BadRequestException(`Unsupported transaction status: ${status}`);
     }
-  }
-
-  private shouldLinkCard(
-    dto: NormalizedInvoiceStatus,
-    normalizedStatus: TransactionStatus,
-  ): boolean {
-    const cardToken = dto.walletData?.cardToken?.trim();
-    if (!cardToken) {
-      return false;
-    }
-
-    return ![
-      TransactionStatus.FAILURE,
-      TransactionStatus.REVERSED,
-      TransactionStatus.EXPIRED,
-    ].includes(normalizedStatus);
   }
 
   private async replaceSubscriptionCard(
