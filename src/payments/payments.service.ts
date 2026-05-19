@@ -357,7 +357,7 @@ export class PaymentsService implements OnModuleInit {
     dto: NormalizedInvoiceStatus,
   ): Promise<void> {
     const webhookModifiedDate = new Date(dto.modifiedDate);
-    if (transaction.modifiedDate && transaction.modifiedDate >= webhookModifiedDate) {
+    if (transaction.modifiedDate && transaction.modifiedDate > webhookModifiedDate) {
       this.logger.warn(
         `Skipping stale invoice update invoiceId=${dto.invoiceId} transactionId=${transaction.transactionId} localModifiedDate=${transaction.modifiedDate.toISOString()} webhookModifiedDate=${webhookModifiedDate.toISOString()}`,
       );
@@ -380,7 +380,7 @@ export class PaymentsService implements OnModuleInit {
         throw new NotFoundException('Transaction not found.');
       }
 
-      if (lockedTransaction.modifiedDate && lockedTransaction.modifiedDate >= webhookModifiedDate) {
+      if (lockedTransaction.modifiedDate && lockedTransaction.modifiedDate > webhookModifiedDate) {
         this.logger.warn(
           `Skipping locked stale invoice update invoiceId=${dto.invoiceId} transactionId=${lockedTransaction.transactionId} localModifiedDate=${lockedTransaction.modifiedDate.toISOString()} webhookModifiedDate=${webhookModifiedDate.toISOString()}`,
         );
