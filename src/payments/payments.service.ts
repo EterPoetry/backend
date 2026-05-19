@@ -10,7 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes, createVerify } from 'crypto';
-import { DataSource, EntityManager, In, IsNull, LessThanOrEqual, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { Subscription } from '../subscriptions/entities/subscription.entity';
 import { Transaction } from '../subscriptions/entities/transaction.entity';
 import { Card } from '../subscriptions/entities/card.entity';
@@ -176,7 +176,7 @@ export class PaymentsService implements OnModuleInit {
       return null;
     }
 
-    const hideCard = await this.hasPendingCardUpdate(subscription.subscriptionId);
+    const hideCard = await this.shouldHideSubscriptionCard(subscription.subscriptionId);
 
     return this.buildSubscriptionResponse(subscription, hideCard);
   }
@@ -405,6 +405,7 @@ export class PaymentsService implements OnModuleInit {
       );
 
       let shouldEmitCardLinked = false;
+      let suppressTransactionUpdated = false;
 
       if (dto.walletData?.walletId && dto.walletData.walletId !== subscription.walletId) {
         this.logger.log(
@@ -428,6 +429,7 @@ export class PaymentsService implements OnModuleInit {
           dto.paymentInfo?.maskedPan,
         );
         shouldEmitCardLinked = true;
+        suppressTransactionUpdated = true;
       }
 
       if (!lockedTransaction.isCardUpdating && normalizedStatus === TransactionStatus.SUCCESS) {
@@ -476,6 +478,7 @@ export class PaymentsService implements OnModuleInit {
             ? this.formatMinorAmount(dto.amountMinor)
             : lockedTransaction.sum,
         currency: dto.currencyCode || lockedTransaction.currency,
+        isCardUpdating: lockedTransaction.isCardUpdating && !suppressTransactionUpdated,
       });
       this.logger.log(
         `Transaction updated transactionId=${lockedTransaction.transactionId} invoiceId=${lockedTransaction.invoiceId} newStatus=${normalizedStatus} amount=${dto.amountMinor !== null ? this.formatMinorAmount(dto.amountMinor) : lockedTransaction.amount ?? lockedTransaction.sum} currency=${dto.currencyCode || lockedTransaction.currency}`,
@@ -505,6 +508,7 @@ export class PaymentsService implements OnModuleInit {
         updatedTransaction,
         updatedSubscription,
         shouldEmitCardLinked,
+        suppressTransactionUpdated,
       };
     });
 
@@ -516,6 +520,7 @@ export class PaymentsService implements OnModuleInit {
     );
 
     if (
+      !emissionResult.suppressTransactionUpdated &&
       !emissionResult.updatedTransaction.isCardUpdating &&
       [
         TransactionStatus.PROCESSING,
@@ -530,7 +535,9 @@ export class PaymentsService implements OnModuleInit {
     }
 
     if (emissionResult.shouldEmitCardLinked && emissionResult.updatedSubscription.card) {
-      const hideCard = await this.hasPendingCardUpdate(emissionResult.updatedSubscription.subscriptionId);
+      const hideCard = await this.shouldHideSubscriptionCard(
+        emissionResult.updatedSubscription.subscriptionId,
+      );
       this.paymentsGateway.emitCardLinked(emissionResult.userId, {
         card: {
           cardId: emissionResult.updatedSubscription.card.cardId,
@@ -780,22 +787,27 @@ export class PaymentsService implements OnModuleInit {
     };
   }
 
-  private async hasPendingCardUpdate(subscriptionId: number): Promise<boolean> {
-    const pendingStatuses = [
-      TransactionStatus.CREATED,
-      TransactionStatus.PROCESSING,
-      TransactionStatus.HOLD,
-    ];
-
-    const count = await this.transactionsRepository.count({
+  private async shouldHideSubscriptionCard(subscriptionId: number): Promise<boolean> {
+    const latestCardUpdate = await this.transactionsRepository.findOne({
       where: {
         subscriptionId,
         isCardUpdating: true,
-        status: In(pendingStatuses),
+      },
+      order: {
+        transactionId: 'DESC',
       },
     });
 
-    return count > 0;
+    if (!latestCardUpdate) {
+      return false;
+    }
+
+    return [
+      TransactionStatus.CREATED,
+      TransactionStatus.PROCESSING,
+      TransactionStatus.HOLD,
+      TransactionStatus.SUCCESS,
+    ].includes(latestCardUpdate.status as TransactionStatus);
   }
 
   private async verifyWebhookSignature(
