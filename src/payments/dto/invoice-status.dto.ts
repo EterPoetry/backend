@@ -115,6 +115,24 @@ class CancelListItemDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @ValidateIf((_, value) => typeof value === 'string')
+  @IsNumberString()
+  @ValidateIf((_, value) => typeof value === 'number')
+  @IsNumber()
+  ccy?: string | number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  approvalCode?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  rrn?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsString()
   extRef?: string;
 }
