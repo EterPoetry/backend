@@ -10,7 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes, createVerify } from 'crypto';
-import { DataSource, EntityManager, IsNull, LessThanOrEqual, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { Subscription } from '../subscriptions/entities/subscription.entity';
 import { Transaction } from '../subscriptions/entities/transaction.entity';
 import { Card } from '../subscriptions/entities/card.entity';
@@ -172,7 +172,13 @@ export class PaymentsService implements OnModuleInit {
       relations: { card: true },
     });
 
-    return subscription ? this.buildSubscriptionResponse(subscription) : null;
+    if (!subscription) {
+      return null;
+    }
+
+    const hideCard = await this.hasPendingCardUpdate(subscription.subscriptionId);
+
+    return this.buildSubscriptionResponse(subscription, hideCard);
   }
 
   async cancelSubscription(userId: number): Promise<{ ok: true }> {
@@ -410,9 +416,9 @@ export class PaymentsService implements OnModuleInit {
         subscription.walletId = dto.walletData.walletId;
       }
 
-      if (dto.walletData?.status?.toLowerCase() === 'created' && dto.walletData.cardToken) {
+      if (lockedTransaction.isCardUpdating && dto.walletData?.cardToken) {
         this.logger.log(
-          `Replacing linked card subscriptionId=${subscription.subscriptionId} newCardToken=${this.maskToken(dto.walletData.cardToken)} paymentSystem=${dto.paymentInfo?.paymentSystem ?? 'unknown'} walletStatus=${dto.walletData.status} transactionStatus=${normalizedStatus}`,
+          `Replacing linked card subscriptionId=${subscription.subscriptionId} newCardToken=${this.maskToken(dto.walletData.cardToken)} paymentSystem=${dto.paymentInfo?.paymentSystem ?? 'unknown'} walletStatus=${dto.walletData.status ?? 'unknown'} transactionStatus=${normalizedStatus}`,
         );
         await this.replaceSubscriptionCard(
           manager,
@@ -524,13 +530,14 @@ export class PaymentsService implements OnModuleInit {
     }
 
     if (emissionResult.shouldEmitCardLinked && emissionResult.updatedSubscription.card) {
+      const hideCard = await this.hasPendingCardUpdate(emissionResult.updatedSubscription.subscriptionId);
       this.paymentsGateway.emitCardLinked(emissionResult.userId, {
         card: {
           cardId: emissionResult.updatedSubscription.card.cardId,
           paymentSystem: emissionResult.updatedSubscription.card.paymentSystem,
           maskedNumber: emissionResult.updatedSubscription.card.maskedNumber,
         },
-        subscription: this.buildSubscriptionResponse(emissionResult.updatedSubscription),
+        subscription: this.buildSubscriptionResponse(emissionResult.updatedSubscription, hideCard),
       });
     }
   }
@@ -736,7 +743,10 @@ export class PaymentsService implements OnModuleInit {
     return subscription;
   }
 
-  private buildSubscriptionResponse(subscription: Subscription): SubscriptionResponse {
+  private buildSubscriptionResponse(
+    subscription: Subscription,
+    hideCard = false,
+  ): SubscriptionResponse {
     return {
       subscriptionId: subscription.subscriptionId,
       userId: subscription.userId,
@@ -745,7 +755,7 @@ export class PaymentsService implements OnModuleInit {
       nextPaymentDate: subscription.nextPaymentDate,
       cancellationDate: subscription.cancellationDate,
       walletId: subscription.walletId,
-      card: subscription.card
+      card: !hideCard && subscription.card
         ? {
             cardId: subscription.card.cardId,
             paymentSystem: subscription.card.paymentSystem,
@@ -768,6 +778,24 @@ export class PaymentsService implements OnModuleInit {
       createdAt: transaction.createdAt,
       updatedAt: transaction.updatedAt,
     };
+  }
+
+  private async hasPendingCardUpdate(subscriptionId: number): Promise<boolean> {
+    const pendingStatuses = [
+      TransactionStatus.CREATED,
+      TransactionStatus.PROCESSING,
+      TransactionStatus.HOLD,
+    ];
+
+    const count = await this.transactionsRepository.count({
+      where: {
+        subscriptionId,
+        isCardUpdating: true,
+        status: In(pendingStatuses),
+      },
+    });
+
+    return count > 0;
   }
 
   private async verifyWebhookSignature(
