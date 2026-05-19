@@ -417,19 +417,24 @@ export class PaymentsService implements OnModuleInit {
         subscription.walletId = dto.walletData.walletId;
       }
 
-      if (lockedTransaction.isCardUpdating && dto.walletData?.cardToken) {
+      const cardToken = dto.walletData?.cardToken;
+      const shouldLinkCard =
+        !!cardToken &&
+        (lockedTransaction.isCardUpdating || normalizedStatus === TransactionStatus.SUCCESS);
+
+      if (shouldLinkCard) {
         this.logger.log(
-          `Replacing linked card subscriptionId=${subscription.subscriptionId} newCardToken=${this.maskToken(dto.walletData.cardToken)} paymentSystem=${dto.paymentInfo?.paymentSystem ?? 'unknown'} walletStatus=${dto.walletData.status ?? 'unknown'} transactionStatus=${normalizedStatus}`,
+          `Replacing linked card subscriptionId=${subscription.subscriptionId} newCardToken=${this.maskToken(cardToken)} paymentSystem=${dto.paymentInfo?.paymentSystem ?? 'unknown'} walletStatus=${dto.walletData?.status ?? 'unknown'} transactionStatus=${normalizedStatus}`,
         );
         await this.replaceSubscriptionCard(
           manager,
           subscription,
-          dto.walletData.cardToken,
+          cardToken,
           dto.paymentInfo?.paymentSystem,
           dto.paymentInfo?.maskedPan,
         );
         shouldEmitCardLinked = true;
-        suppressTransactionUpdated = true;
+        suppressTransactionUpdated = lockedTransaction.isCardUpdating;
       }
 
       if (!lockedTransaction.isCardUpdating && normalizedStatus === TransactionStatus.SUCCESS) {
