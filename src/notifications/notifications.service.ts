@@ -18,6 +18,7 @@ import { BrowserPushNotificationsService } from './browser-push-notifications.se
 import { NotificationEvent } from './entities/notification-event.entity';
 import { Notification } from './entities/notification.entity';
 import { NotificationType } from './notification-type.enum';
+import {ComplaintReason} from "../common/enums/complaint-reason.enum";
 
 export type NotificationTargetType = 'post' | 'comment' | 'profile' | 'system';
 
@@ -59,6 +60,7 @@ export interface NotificationResponse {
   readAt: Date | null;
   seenAt: Date | null;
   lastActor: NotificationActorResponse | null;
+  violationReason?: ComplaintReason | null;
 }
 
 export interface PaginatedNotificationsResponse {
@@ -131,6 +133,7 @@ export class NotificationsService {
       .leftJoinAndSelect('lastActor.subscription', 'lastActorSubscription')
       .leftJoinAndSelect('notification.post', 'post')
       .leftJoinAndSelect('notification.comment', 'comment')
+      .leftJoinAndSelect('notification.postComplaint', 'postComplaint')
       .where('notification.recipient_user_id = :recipientUserId', { recipientUserId })
       .orderBy('notification.last_event_at', 'DESC')
       .addOrderBy('notification.notification_id', 'DESC');
@@ -699,6 +702,7 @@ export class NotificationsService {
       readAt: notification.readAt,
       seenAt: notification.seenAt,
       lastActor: this.mapNotificationActor(notification.lastActor),
+      violationReason: notification.postComplaint?.complaintReason ?? null,
     };
   }
 
@@ -731,6 +735,7 @@ export class NotificationsService {
         .leftJoinAndSelect('lastActor.subscription', 'lastActorSubscription')
         .leftJoinAndSelect('notification.post', 'post')
         .leftJoinAndSelect('notification.comment', 'comment')
+        .leftJoinAndSelect('notification.postComplaint', 'postComplaint')
         .where('notification.recipient_user_id = :recipientUserId', { recipientUserId })
         .andWhere('notification.group_key = :groupKey', { groupKey })
         .getOne();

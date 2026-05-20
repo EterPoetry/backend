@@ -16,6 +16,7 @@ import {
   ApiPropertyOptional,
   ApiTags,
 } from '@nestjs/swagger';
+import { ComplaintReason } from '../common/enums/complaint-reason.enum';
 import { Request } from 'express';
 import { SaveBrowserPushSubscriptionDto } from './dto/save-browser-push-subscription.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -131,6 +132,9 @@ class NotificationResponseDto implements NotificationResponse {
 
   @ApiPropertyOptional({ type: () => NotificationActorResponseDto, nullable: true })
   lastActor: NotificationActorResponseDto | null;
+
+  @ApiPropertyOptional({ enum: ComplaintReason, enumName: 'ComplaintReason', nullable: true })
+  violationReason?: ComplaintReason | null;
 }
 
 class PaginatedNotificationsResponseDto implements PaginatedNotificationsResponse {

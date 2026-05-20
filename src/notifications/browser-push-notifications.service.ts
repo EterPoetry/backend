@@ -7,6 +7,7 @@ import { NotificationResponse } from './notifications.service';
 import { BrowserPushSubscription } from './entities/browser-push-subscription.entity';
 import { SaveBrowserPushSubscriptionDto } from './dto/save-browser-push-subscription.dto';
 import { NotificationType } from './notification-type.enum';
+import { COMPLAINT_REASON_LABELS } from '../common/enums/complaint-reason.enum';
 
 interface BrowserPushPayload {
   type: 'notifications.updated';
@@ -176,63 +177,67 @@ export class BrowserPushNotificationsService {
   }
 
   private buildWebPushContent(notification: NotificationResponse): BrowserPushPayload['webPush'] {
-    const actorName = notification.lastActor?.name ?? 'Someone';
+    const actor = notification.lastActor?.name
+      ? `Користувач ${notification.lastActor.name}`
+      : 'Користувач';
 
     switch (notification.notificationType) {
       case NotificationType.POST_LIKED:
         return {
-          title: notification.eventsCount > 1 ? 'New likes' : 'New like',
+          title: notification.eventsCount > 1 ? 'Нові вподобайки' : 'Нова вподобайка',
           body:
             notification.eventsCount > 1
-              ? `${actorName} and ${notification.eventsCount - 1} others liked your post.`
-              : `${actorName} liked your post.`,
+              ? `${actor} та ще ${notification.eventsCount - 1} інших вподобали ваш пост.`
+              : `${actor} вподобав ваш пост.`,
           tag: `notification:${notification.notificationId}`,
           renotify: notification.eventsCount > 1,
         };
       case NotificationType.POST_COMMENTED:
         return {
-          title: notification.eventsCount > 1 ? 'New comments' : 'New comment',
+          title: notification.eventsCount > 1 ? 'Нові коментарі' : 'Новий коментар',
           body:
             notification.eventsCount > 1
-              ? `${actorName} and ${notification.eventsCount - 1} others commented on your post.`
-              : `${actorName} commented on your post.`,
+              ? `${actor} та ще ${notification.eventsCount - 1} інших прокоментували ваш пост.`
+              : `${actor} прокоментував ваш пост.`,
           tag: `notification:${notification.notificationId}`,
           renotify: notification.eventsCount > 1,
         };
       case NotificationType.COMMENT_REPLIED:
         return {
-          title: notification.eventsCount > 1 ? 'New replies' : 'New reply',
+          title: notification.eventsCount > 1 ? 'Нові відповіді' : 'Нова відповідь',
           body:
             notification.eventsCount > 1
-              ? `${actorName} and ${notification.eventsCount - 1} others replied to your comment.`
-              : `${actorName} replied to your comment.`,
+              ? `${actor} та ще ${notification.eventsCount - 1} інших відповіли на ваш коментар.`
+              : `${actor} відповів на ваш коментар.`,
           tag: `notification:${notification.notificationId}`,
           renotify: notification.eventsCount > 1,
         };
       case NotificationType.COMMENT_LIKED:
         return {
-          title: notification.eventsCount > 1 ? 'New comment likes' : 'New comment like',
+          title: notification.eventsCount > 1 ? 'Нові вподобайки коментаря' : 'Нова вподобайка коментаря',
           body:
             notification.eventsCount > 1
-              ? `${actorName} and ${notification.eventsCount - 1} others liked your comment.`
-              : `${actorName} liked your comment.`,
+              ? `${actor} та ще ${notification.eventsCount - 1} інших вподобали ваш коментар.`
+              : `${actor} вподобав ваш коментар.`,
           tag: `notification:${notification.notificationId}`,
           renotify: notification.eventsCount > 1,
         };
       case NotificationType.USER_FOLLOWED:
         return {
-          title: notification.eventsCount > 1 ? 'New followers' : 'New follower',
+          title: notification.eventsCount > 1 ? 'Нові підписники' : 'Новий підписник',
           body:
             notification.eventsCount > 1
-              ? `${actorName} and ${notification.eventsCount - 1} others followed you.`
-              : `${actorName} followed you.`,
+              ? `${actor} та ще ${notification.eventsCount - 1} інших підписалися на вас.`
+              : `${actor} підписався на вас.`,
           tag: `notification:${notification.notificationId}`,
           renotify: notification.eventsCount > 1,
         };
       case NotificationType.POST_VIOLATION_CONFIRMED:
         return {
-          title: 'Complaint resolved',
-          body: 'A complaint against your post was confirmed.',
+          title: 'Ваш пост порушує наші правила',
+          body: notification.violationReason
+            ? `Скаргу на ваш пост підтверджено. Причина: ${COMPLAINT_REASON_LABELS[notification.violationReason]}`
+            : 'Скаргу на ваш пост підтверджено.',
           tag: `notification:${notification.notificationId}`,
           renotify: false,
         };
