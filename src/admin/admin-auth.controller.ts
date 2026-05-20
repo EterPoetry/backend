@@ -16,6 +16,7 @@ import { type CookieOptions, Request, Response } from 'express';
 import { AdminRole } from './admin-role.enum';
 import { AdminAuthService, AdminAuthResponse, SafeAdmin } from './admin-auth.service';
 import { AcceptAdminInviteDto } from './dto/accept-admin-invite.dto';
+import { AdminInviteTokenQueryDto } from './dto/admin-invite-token-query.dto';
 import { AdminLoginDto } from './dto/admin-login.dto';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { AdminJwtAuthGuard } from './guards/admin-jwt-auth.guard';
@@ -103,15 +104,11 @@ export class AdminAuthController {
   @Post('invite/accept')
   @HttpCode(200)
   async acceptInvite(
-    @Query('token') token: string | undefined,
+    @Query() query: AdminInviteTokenQueryDto,
     @Body() dto: AcceptAdminInviteDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<AdminAuthResponseDto> {
-    if (!token) {
-      throw new UnauthorizedException('Invitation token is missing.');
-    }
-
-    const authData = await this.adminAuthService.acceptInvite(token, dto);
+    const authData = await this.adminAuthService.acceptInvite(query.token, dto);
     this.setRefreshCookie(res, authData.refreshToken);
     const { refreshToken, ...response } = authData;
     return response;

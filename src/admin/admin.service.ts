@@ -239,24 +239,24 @@ export class AdminService {
 
   async listUsers(query: GetAdminUsersQueryDto): Promise<OffsetPaginatedResponse<AdminUserListItemResponse>> {
     const queryBuilder = this.usersRepository
-      .createQueryBuilder('user')
+      .createQueryBuilder('appUser')
       .withDeleted()
       .select([
-        'user.userId AS "userId"',
-        'user.name AS "name"',
-        'user.username AS "username"',
-        'user.email AS "email"',
-        'user.created_at AS "createdAt"',
-        'user.blocked_at AS "blockedAt"',
+        'appUser.userId AS "userId"',
+        'appUser.name AS "name"',
+        'appUser.username AS "username"',
+        'appUser.email AS "email"',
+        'appUser.created_at AS "createdAt"',
+        'appUser.blocked_at AS "blockedAt"',
       ])
       .addSelect(
-        `(SELECT COUNT(*)::int FROM posts post WHERE post.author_id = user.user_id)`,
+        `(SELECT COUNT(*)::int FROM posts post WHERE post.author_id = appUser.user_id)`,
         'postsCount',
       )
       .addSelect(
         `(SELECT COUNT(*)::int
             FROM post_complaints complaint
-           WHERE complaint.target_user_id = user.user_id
+           WHERE complaint.target_user_id = appUser.user_id
              AND complaint.status = :resolvedStatus
              AND (complaint.expires_at IS NULL OR complaint.expires_at > NOW()))`,
         'activeViolationsCount',
@@ -265,7 +265,7 @@ export class AdminService {
 
     if (query.search?.trim()) {
       queryBuilder.where(
-        '(user.name ILIKE :search OR user.username ILIKE :search OR user.email ILIKE :search)',
+        '(appUser.name ILIKE :search OR appUser.username ILIKE :search OR appUser.email ILIKE :search)',
         { search: `%${query.search.trim()}%` },
       );
     }
@@ -968,19 +968,19 @@ export class AdminService {
     const direction = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
     switch (sortBy) {
       case AdminUserListSortBy.NAME:
-        queryBuilder.orderBy('user.name', direction).addOrderBy('user.user_id', 'DESC');
+        queryBuilder.orderBy('appUser.name', direction).addOrderBy('appUser.user_id', 'DESC');
         return;
       case AdminUserListSortBy.USERNAME:
-        queryBuilder.orderBy('user.username', direction).addOrderBy('user.user_id', 'DESC');
+        queryBuilder.orderBy('appUser.username', direction).addOrderBy('appUser.user_id', 'DESC');
         return;
       case AdminUserListSortBy.POSTS_COUNT:
-        queryBuilder.orderBy('"postsCount"', direction).addOrderBy('user.user_id', 'DESC');
+        queryBuilder.orderBy('"postsCount"', direction).addOrderBy('appUser.user_id', 'DESC');
         return;
       case AdminUserListSortBy.ACTIVE_VIOLATIONS_COUNT:
-        queryBuilder.orderBy('"activeViolationsCount"', direction).addOrderBy('user.user_id', 'DESC');
+        queryBuilder.orderBy('"activeViolationsCount"', direction).addOrderBy('appUser.user_id', 'DESC');
         return;
       default:
-        queryBuilder.orderBy('user.created_at', direction).addOrderBy('user.user_id', 'DESC');
+        queryBuilder.orderBy('appUser.created_at', direction).addOrderBy('appUser.user_id', 'DESC');
     }
   }
 
