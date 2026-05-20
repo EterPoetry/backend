@@ -51,6 +51,7 @@ import { PopularPostSnapshotItem } from './entities/popular-post-snapshot-item.e
 import { PostAudioAnalysis } from './entities/post-audio-analysis.entity';
 import { PostAudioAnalysisService } from './post-audio-analysis.service';
 import { AudioAnalysisV1Dto } from './audio-analysis.types';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export interface PostAuthorProfileResponse {
   userId: number;
@@ -208,6 +209,7 @@ export class PostsService {
     private readonly postAudioAnalysisService: PostAudioAnalysisService,
     private readonly publicConfigService: PublicConfigService,
     private readonly fileStorageService: FileStorageService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async createEmptyPost(authorId: number, audio: UploadedPostAudio): Promise<PostResponse> {
@@ -540,12 +542,19 @@ export class PostsService {
     });
 
     if (!alreadyLiked) {
-      await this.postReactionsRepository.save(
+      const reaction = await this.postReactionsRepository.save(
         this.postReactionsRepository.create({
           postId: post.postId,
           userId: requesterUserId,
           reactionType: ReactionType.LIKE,
         }),
+      );
+
+      await this.notificationsService.recordPostLike(
+        post.authorId,
+        requesterUserId,
+        post.postId,
+        reaction.postReactionId,
       );
     }
 
@@ -557,11 +566,24 @@ export class PostsService {
 
   async unlikePost(postId: number, requesterUserId: number): Promise<PostLikeMutationResponse> {
     const post = await this.requirePublishedPost(postId);
+    const reaction = await this.postReactionsRepository.findOne({
+      where: {
+        postId: post.postId,
+        userId: requesterUserId,
+      },
+      select: {
+        postReactionId: true,
+      },
+    });
 
     await this.postReactionsRepository.delete({
       postId: post.postId,
       userId: requesterUserId,
     });
+
+    if (reaction) {
+      await this.notificationsService.removePostLike(reaction.postReactionId);
+    }
 
     return {
       ok: true,
@@ -1436,6 +1458,7 @@ export class PostsService {
       },
       relations: { author: true },
       select: {
+        authorId: true,
         postId: true,
         status: true,
       },

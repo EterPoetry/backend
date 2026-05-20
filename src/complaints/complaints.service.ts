@@ -10,6 +10,7 @@ import {
   COMPLAINT_REASON_LABELS,
 } from '../common/enums/complaint-reason.enum';
 import { ComplaintStatus } from '../common/enums/complaint-status.enum';
+import { NotificationsService } from '../notifications/notifications.service';
 import { Post } from '../posts/entities/post.entity';
 import { QueryFailedError, Repository } from 'typeorm';
 import { PostComplaint } from './entities/post-complaint.entity';
@@ -39,6 +40,7 @@ export class ComplaintsService {
     private readonly complaintsRepository: Repository<PostComplaint>,
     @InjectRepository(Post)
     private readonly postsRepository: Repository<Post>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   getComplaintReasons(): ComplaintReasonResponse[] {
@@ -100,6 +102,42 @@ export class ComplaintsService {
       }
       throw error;
     }
+
+    return this.mapComplaintResponse(savedComplaint);
+  }
+
+  async resolveComplaint(
+    complaintId: number,
+    adminId: number | null,
+    expiresAt: Date | null,
+  ): Promise<ComplaintResponse> {
+    const complaint = await this.complaintsRepository.findOne({
+      where: { postComplaintId: complaintId },
+    });
+
+    if (!complaint) {
+      throw new NotFoundException('Complaint not found.');
+    }
+
+    if (complaint.status === ComplaintStatus.RESOLVED) {
+      return this.mapComplaintResponse(complaint);
+    }
+
+    if (complaint.status !== ComplaintStatus.PENDING) {
+      throw new ConflictException('Only pending complaints can be resolved.');
+    }
+
+    complaint.status = ComplaintStatus.RESOLVED;
+    complaint.adminId = adminId;
+    complaint.expiresAt = expiresAt;
+
+    const savedComplaint = await this.complaintsRepository.save(complaint);
+
+    await this.notificationsService.recordPostViolationConfirmed(
+      savedComplaint.targetUserId,
+      savedComplaint.targetPostId,
+      savedComplaint.postComplaintId,
+    );
 
     return this.mapComplaintResponse(savedComplaint);
   }

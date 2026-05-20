@@ -101,7 +101,7 @@ export class User {
   @OneToMany(() => Follower, (follower) => follower.targetUser)
   followers: Follower[];
 
-  @OneToMany(() => Notification, (notification) => notification.user)
+  @OneToMany(() => Notification, (notification) => notification.recipientUser)
   notifications: Notification[];
 
   @OneToMany(() => RefreshToken, (refreshToken) => refreshToken.user)

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Post } from '../posts/entities/post.entity';
 import { CommentReaction } from '../reactions/entities/comment-reaction.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { StorageModule } from '../storage/storage.module';
 import { PopularCommentSnapshot } from './entities/popular-comment-snapshot.entity';
 import { PopularCommentSnapshotItem } from './entities/popular-comment-snapshot-item.entity';
@@ -18,6 +19,7 @@ import { CommentsService } from './comments.service';
       PopularCommentSnapshotItem,
     ]),
     StorageModule,
+    NotificationsModule,
   ],
   providers: [CommentsService],
   exports: [TypeOrmModule, CommentsService],

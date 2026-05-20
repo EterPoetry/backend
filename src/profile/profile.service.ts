@@ -10,6 +10,7 @@ import { Post } from '../posts/entities/post.entity';
 import { GetMyPostsQueryDto } from '../posts/dto/get-my-posts-query.dto';
 import { PaginatedPostsResponse, PostsService } from '../posts/posts.service';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
+import { NotificationsService } from '../notifications/notifications.service';
 import { rethrowUserUniqueConstraint } from '../users/user-conflict.util';
 import { User } from '../users/entities/user.entity';
 import { UsernameService } from '../users/username.service';
@@ -102,6 +103,7 @@ export class ProfileService {
     private readonly configService: ConfigService,
     private readonly avatarStorageService: AvatarStorageService,
     private readonly usernameService: UsernameService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async getMyProfile(userId: number): Promise<ProfileResponse> {
@@ -388,11 +390,17 @@ export class ProfileService {
     });
 
     if (!alreadyFollowing) {
-      await this.followersRepository.save(
+      const follower = await this.followersRepository.save(
         this.followersRepository.create({
           followerUserId,
           targetUserId,
         }),
+      );
+
+      await this.notificationsService.recordFollow(
+        targetUserId,
+        followerUserId,
+        follower.followerId,
       );
     }
 
@@ -413,10 +421,24 @@ export class ProfileService {
       throw new NotFoundException('User not found.');
     }
 
+    const relation = await this.followersRepository.findOne({
+      where: {
+        followerUserId,
+        targetUserId,
+      },
+      select: {
+        followerId: true,
+      },
+    });
+
     await this.followersRepository.delete({
       followerUserId,
       targetUserId,
     });
+
+    if (relation) {
+      await this.notificationsService.removeFollow(relation.followerId);
+    }
 
     return this.buildPublicProfileResponse(targetUser, followerUserId);
   }

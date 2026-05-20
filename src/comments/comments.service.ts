@@ -9,6 +9,7 @@ import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { FileStorageService } from '../storage/file-storage.service';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
+import { NotificationsService } from '../notifications/notifications.service';
 import { Post } from '../posts/entities/post.entity';
 import { CommentReaction } from '../reactions/entities/comment-reaction.entity';
 import { PostComment } from './entities/post-comment.entity';
@@ -74,6 +75,7 @@ export class CommentsService {
     @InjectRepository(PopularCommentSnapshotItem)
     private readonly popularCommentSnapshotItemsRepository: Repository<PopularCommentSnapshotItem>,
     private readonly fileStorageService: FileStorageService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async getPostComments(
@@ -140,7 +142,7 @@ export class CommentsService {
     requesterUserId: number,
     dto: CreateCommentDto,
   ): Promise<CommentResponse> {
-    await this.requirePublishedPost(postId);
+    const post = await this.requirePublishedPost(postId);
     const trimmedCommentText = dto.commentText.trim();
 
     if (!trimmedCommentText) {
@@ -173,6 +175,42 @@ export class CommentsService {
       }),
     );
 
+    if (replyToCommentId !== null) {
+      const parentComment = await this.commentsRepository.findOne({
+        where: { postCommentId: replyToCommentId },
+        select: {
+          postCommentId: true,
+          commentAuthorId: true,
+        },
+      });
+
+      if (parentComment && parentComment.commentAuthorId !== requesterUserId) {
+        await this.notificationsService.recordCommentReply(
+          parentComment.commentAuthorId,
+          requesterUserId,
+          postId,
+          parentComment.postCommentId,
+          comment.postCommentId,
+        );
+      }
+
+      if (post.authorId !== requesterUserId && post.authorId !== parentComment?.commentAuthorId) {
+        await this.notificationsService.recordPostComment(
+          post.authorId,
+          requesterUserId,
+          postId,
+          comment.postCommentId,
+        );
+      }
+    } else if (post.authorId !== requesterUserId) {
+      await this.notificationsService.recordPostComment(
+        post.authorId,
+        requesterUserId,
+        postId,
+        comment.postCommentId,
+      );
+    }
+
     const row = await this.createCommentsBaseQuery(postId, requesterUserId)
       .andWhere('comment.post_comment_id = :commentId', { commentId: comment.postCommentId })
       .getRawOne<CommentRow>();
@@ -198,11 +236,19 @@ export class CommentsService {
     });
 
     if (!alreadyLiked) {
-      await this.commentReactionsRepository.save(
+      const reaction = await this.commentReactionsRepository.save(
         this.commentReactionsRepository.create({
           postCommentId: comment.postCommentId,
           userId: requesterUserId,
         }),
+      );
+
+      await this.notificationsService.recordCommentLike(
+        comment.commentAuthorId,
+        requesterUserId,
+        comment.postId,
+        comment.postCommentId,
+        reaction.commentReactionId,
       );
     }
 
@@ -217,11 +263,24 @@ export class CommentsService {
     requesterUserId: number,
   ): Promise<CommentLikeMutationResponse> {
     const comment = await this.requireCommentOnPublishedPost(commentId);
+    const reaction = await this.commentReactionsRepository.findOne({
+      where: {
+        postCommentId: comment.postCommentId,
+        userId: requesterUserId,
+      },
+      select: {
+        commentReactionId: true,
+      },
+    });
 
     await this.commentReactionsRepository.delete({
       postCommentId: comment.postCommentId,
       userId: requesterUserId,
     });
+
+    if (reaction) {
+      await this.notificationsService.removeCommentLike(reaction.commentReactionId);
+    }
 
     return {
       ok: true,
@@ -248,6 +307,20 @@ export class CommentsService {
     if (!canDelete) {
       throw new BadRequestException('You cannot delete this comment.');
     }
+
+    const deletedCommentIds = await this.commentsRepository.find({
+      where: [
+        { postCommentId: comment.postCommentId },
+        { replyToCommentId: comment.postCommentId },
+      ],
+      select: {
+        postCommentId: true,
+      },
+    });
+
+    await this.notificationsService.removeNotificationsForComments(
+      deletedCommentIds.map((deletedComment) => deletedComment.postCommentId),
+    );
 
     await this.commentsRepository.delete([
       { postCommentId: comment.postCommentId },

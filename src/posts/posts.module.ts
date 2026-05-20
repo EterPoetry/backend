@@ -13,6 +13,7 @@ import { CommentsModule } from '../comments/comments.module';
 import { UsersModule } from '../users/users.module';
 import { PublicConfigModule } from '../public-config/public-config.module';
 import { PostReaction } from '../reactions/entities/post-reaction.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
 import { PostAudioStorageService } from './post-audio-storage.service';
@@ -37,6 +38,7 @@ import { PostAudioAnalysisService } from './post-audio-analysis.service';
     CommentsModule,
     UsersModule,
     PublicConfigModule,
+    NotificationsModule,
   ],
   controllers: [PostsController],
   providers: [
