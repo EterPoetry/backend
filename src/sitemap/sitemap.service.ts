@@ -120,7 +120,7 @@ export class SitemapService {
         FROM posts
         INNER JOIN users ON users.user_id = posts.author_id
         WHERE posts.status = $2
-          AND users.deleted_at IS NULL
+          AND users.blocked_at IS NULL
       ) sub
       GROUP BY shard_num
       ORDER BY shard_num
@@ -138,7 +138,7 @@ export class SitemapService {
       FROM (
         SELECT created_at, ROW_NUMBER() OVER (ORDER BY user_id ASC) AS rn
         FROM users
-        WHERE deleted_at IS NULL
+        WHERE blocked_at IS NULL
       ) sub
       GROUP BY shard_num
       ORDER BY shard_num
@@ -156,7 +156,7 @@ export class SitemapService {
         FROM posts
         INNER JOIN users ON users.user_id = posts.author_id
         WHERE posts.status = $1
-          AND users.deleted_at IS NULL
+          AND users.blocked_at IS NULL
         ORDER BY posts.post_id DESC
         LIMIT $2
       ) sub
@@ -174,7 +174,7 @@ export class SitemapService {
 
     const posts = await this.postRepository
       .createQueryBuilder('post')
-      .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
+      .innerJoin('post.author', 'author', 'author.blocked_at IS NULL')
       .select(['post.postId', 'post.slug', 'post.updatedAt'])
       .where('post.status = :status', { status: PostStatus.PUBLISHED })
       .orderBy('post.postId', 'ASC')
@@ -200,7 +200,7 @@ export class SitemapService {
     const users = await this.userRepository
       .createQueryBuilder('user')
       .select(['user.userId', 'user.username', 'user.createdAt'])
-      .where('user.deleted_at IS NULL')
+      .where('user.blocked_at IS NULL')
       .orderBy('user.userId', 'ASC')
       .skip(shard * this.shardSize)
       .take(this.shardSize)
@@ -219,7 +219,7 @@ export class SitemapService {
   private async buildRecentPostsSitemap(): Promise<string> {
     const posts = await this.postRepository
       .createQueryBuilder('post')
-      .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
+      .innerJoin('post.author', 'author', 'author.blocked_at IS NULL')
       .select(['post.postId', 'post.slug', 'post.updatedAt'])
       .where('post.status = :status', { status: PostStatus.PUBLISHED })
       .orderBy('post.postId', 'DESC')

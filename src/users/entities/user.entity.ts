@@ -71,8 +71,8 @@ export class User {
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 
-  @DeleteDateColumn({ name: 'deleted_at', type: 'timestamptz', nullable: true })
-  deletedAt: Date | null;
+  @DeleteDateColumn({ name: 'blocked_at', type: 'timestamptz', nullable: true })
+  blockedAt: Date | null;
 
   @OneToMany(() => Post, (post) => post.author)
   posts: Post[];

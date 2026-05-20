@@ -37,4 +37,24 @@ export class RateLimitedMailService {
     const { recipient, verificationCode } = await payloadFactory();
     await this.mailjetService.sendEmailVerificationEmail(recipient, verificationCode);
   }
+
+  async sendAdminInvitationEmail(recipient: MailRecipient, inviteUrl: string): Promise<void> {
+    await this.mailjetService.sendAdminInvitationEmail(recipient, inviteUrl);
+  }
+
+  async sendViolationEmail(
+    recipient: MailRecipient,
+    reasonLabel: string,
+    expiresAt: Date | null,
+  ): Promise<void> {
+    await this.mailjetService.sendViolationEmail(recipient, reasonLabel, expiresAt);
+  }
+
+  async sendAccountBlockedEmail(recipient: MailRecipient): Promise<void> {
+    await this.mailjetService.sendAccountBlockedEmail(recipient);
+  }
+
+  async sendAccountUnblockedEmail(recipient: MailRecipient): Promise<void> {
+    await this.mailjetService.sendAccountUnblockedEmail(recipient);
+  }
 }

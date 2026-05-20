@@ -100,6 +100,110 @@ export class MailjetService {
     }
   }
 
+  async sendAdminInvitationEmail(recipient: MailjetRecipient, inviteUrl: string): Promise<void> {
+    await this.sendMessage({
+      recipient,
+      subject: 'Запрошення до панелі адміністратора',
+      textPart:
+        `Вас запросили до панелі адміністратора Eter Poetry.\n\n` +
+        `Перейдіть за посиланням, щоб завершити реєстрацію: ${inviteUrl}\n\n` +
+        'Посилання дійсне 7 днів.',
+      htmlPart:
+        '<p>Вас запросили до панелі адміністратора Eter Poetry.</p>' +
+        `<p><a href="${inviteUrl}">Завершити реєстрацію</a></p>` +
+        '<p>Посилання дійсне 7 днів.</p>',
+    });
+  }
+
+  async sendViolationEmail(
+    recipient: MailjetRecipient,
+    reasonLabel: string,
+    expiresAt: Date | null,
+  ): Promise<void> {
+    const expiryText = expiresAt
+      ? `Порушення буде активним до ${expiresAt.toISOString()}.`
+      : 'Порушення активне без дати завершення.';
+
+    await this.sendMessage({
+      recipient,
+      subject: 'Зафіксовано порушення правил',
+      textPart:
+        `Ми зафіксували порушення правил у вашому акаунті.\n\n` +
+        `Причина: ${reasonLabel}\n${expiryText}`,
+      htmlPart:
+        '<p>Ми зафіксували порушення правил у вашому акаунті.</p>' +
+        `<p><strong>Причина:</strong> ${reasonLabel}</p>` +
+        `<p>${expiryText}</p>`,
+    });
+  }
+
+  async sendAccountBlockedEmail(recipient: MailjetRecipient): Promise<void> {
+    await this.sendMessage({
+      recipient,
+      subject: 'Ваш акаунт заблоковано',
+      textPart:
+        'Ваш акаунт було заблоковано через активні порушення або рішення адміністратора.',
+      htmlPart:
+        '<p>Ваш акаунт було заблоковано через активні порушення або рішення адміністратора.</p>',
+    });
+  }
+
+  async sendAccountUnblockedEmail(recipient: MailjetRecipient): Promise<void> {
+    await this.sendMessage({
+      recipient,
+      subject: 'Ваш акаунт розблоковано',
+      textPart: 'Ваш акаунт знову активний. Ви можете користуватися платформою без обмежень.',
+      htmlPart:
+        '<p>Ваш акаунт знову активний. Ви можете користуватися платформою без обмежень.</p>',
+    });
+  }
+
+  private async sendMessage(input: {
+    recipient: MailjetRecipient;
+    subject: string;
+    textPart: string;
+    htmlPart: string;
+  }): Promise<void> {
+    const { apiKey, apiSecret, senderEmail, senderName } = this.getConfig();
+    const auth = Buffer.from(`${apiKey}:${apiSecret}`).toString('base64');
+
+    const payload = {
+      Messages: [
+        {
+          From: {
+            Email: senderEmail,
+            Name: senderName,
+          },
+          To: [
+            {
+              Email: input.recipient.email,
+              Name: input.recipient.name ?? input.recipient.email,
+            },
+          ],
+          Subject: input.subject,
+          TextPart: input.textPart,
+          HTMLPart: input.htmlPart,
+        },
+      ],
+    };
+
+    const response = await fetch('https://api.mailjet.com/v3.1/send', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${auth}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new ServiceUnavailableException(
+        `Failed to send email via Mailjet: ${response.status} ${errorText}`,
+      );
+    }
+  }
+
   private getConfig(): {
     apiKey: string;
     apiSecret: string;

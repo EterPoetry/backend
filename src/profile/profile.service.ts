@@ -568,7 +568,7 @@ export class ProfileService {
         { requesterUserId },
       )
       .leftJoin('listUser.subscription', 'listUserSubscription')
-      .where('listUser.deleted_at IS NULL');
+      .where('listUser.blocked_at IS NULL');
 
     if (query.search?.trim()) {
       queryBuilder.andWhere(
@@ -698,7 +698,7 @@ export class ProfileService {
   private async countActiveFollowers(userId: number): Promise<number> {
     const result = await this.followersRepository
       .createQueryBuilder('relation')
-      .innerJoin('relation.followerUser', 'followerUser', 'followerUser.deleted_at IS NULL')
+      .innerJoin('relation.followerUser', 'followerUser', 'followerUser.blocked_at IS NULL')
       .where('relation.target_user_id = :userId', { userId })
       .select('COUNT(relation.follower_id)', 'count')
       .getRawOne<{ count: string }>();
@@ -709,7 +709,7 @@ export class ProfileService {
   private async countActiveFollowing(userId: number): Promise<number> {
     const result = await this.followersRepository
       .createQueryBuilder('relation')
-      .innerJoin('relation.targetUser', 'targetUser', 'targetUser.deleted_at IS NULL')
+      .innerJoin('relation.targetUser', 'targetUser', 'targetUser.blocked_at IS NULL')
       .where('relation.follower_user_id = :userId', { userId })
       .select('COUNT(relation.follower_id)', 'count')
       .getRawOne<{ count: string }>();
@@ -723,7 +723,7 @@ export class ProfileService {
   ): Promise<boolean> {
     const count = await this.followersRepository
       .createQueryBuilder('relation')
-      .innerJoin('relation.targetUser', 'targetUser', 'targetUser.deleted_at IS NULL')
+      .innerJoin('relation.targetUser', 'targetUser', 'targetUser.blocked_at IS NULL')
       .where('relation.follower_user_id = :followerUserId', { followerUserId })
       .andWhere('relation.target_user_id = :targetUserId', { targetUserId })
       .getCount();

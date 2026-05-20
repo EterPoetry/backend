@@ -38,7 +38,7 @@ export class UsersService {
       withDeleted: true,
     });
 
-    if (!user?.deletedAt) {
+    if (!user?.blockedAt) {
       throw new NotFoundException('Blocked user not found.');
     }
 

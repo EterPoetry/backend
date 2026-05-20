@@ -128,7 +128,7 @@ export class NotificationsService {
       .leftJoinAndSelect(
         'notification.lastActor',
         'lastActor',
-        'lastActor.deleted_at IS NULL',
+        'lastActor.blocked_at IS NULL',
       )
       .leftJoinAndSelect('lastActor.subscription', 'lastActorSubscription')
       .leftJoinAndSelect('notification.post', 'post')
@@ -735,7 +735,7 @@ export class NotificationsService {
   }
 
   private mapNotificationActor(user: User | null | undefined): NotificationActorResponse | null {
-    if (!user || user.deletedAt !== null) {
+    if (!user || user.blockedAt !== null) {
       return null;
     }
 
@@ -758,7 +758,7 @@ export class NotificationsService {
         .leftJoinAndSelect(
           'notification.lastActor',
           'lastActor',
-          'lastActor.deleted_at IS NULL',
+          'lastActor.blocked_at IS NULL',
         )
         .leftJoinAndSelect('lastActor.subscription', 'lastActorSubscription')
         .leftJoinAndSelect('notification.post', 'post')
@@ -856,7 +856,7 @@ export class NotificationsService {
         postSlug: null,
         commentId: null,
         postComplaintId: null,
-        username: notification.lastActor?.deletedAt ? null : (notification.lastActor?.username ?? null),
+        username: notification.lastActor?.blockedAt ? null : (notification.lastActor?.username ?? null),
       };
     }
 

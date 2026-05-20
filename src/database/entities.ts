@@ -17,6 +17,7 @@ import { Subscription } from '../subscriptions/entities/subscription.entity';
 import { Transaction } from '../subscriptions/entities/transaction.entity';
 import { Card } from '../subscriptions/entities/card.entity';
 import { Admin } from '../admin/entities/admin.entity';
+import { AdminRefreshToken } from '../admin/entities/admin-refresh-token.entity';
 import { PostComplaint } from '../complaints/entities/post-complaint.entity';
 import { Follower } from '../followers/entities/follower.entity';
 import { BrowserPushSubscription } from '../notifications/entities/browser-push-subscription.entity';
@@ -46,6 +47,7 @@ export const ENTITIES = [
   Transaction,
   Card,
   Admin,
+  AdminRefreshToken,
   PostComplaint,
   Follower,
   BrowserPushSubscription,

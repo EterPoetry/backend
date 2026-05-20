@@ -297,7 +297,7 @@ export class PostsService {
           FROM followers f
           INNER JOIN users feedTargetUser ON feedTargetUser.user_id = f.target_user_id
           WHERE f.follower_user_id = :feedUserId
-            AND feedTargetUser.deleted_at IS NULL
+            AND feedTargetUser.blocked_at IS NULL
         )`,
         { feedUserId: userId },
       );
@@ -449,7 +449,7 @@ export class PostsService {
   ): Promise<PaginatedPostsResponse> {
     const rankingQueryBuilder = this.postsRepository
       .createQueryBuilder('post')
-      .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
+      .innerJoin('post.author', 'author', 'author.blocked_at IS NULL')
       .where('post.status = :status', { status: PostStatus.PUBLISHED });
 
     if (query.search?.trim()) {
@@ -485,7 +485,7 @@ export class PostsService {
               ON popularity_reaction_user.user_id = popularity_post_reaction.user_id
             WHERE popularity_post_reaction.post_id = post.post_id
               AND popularity_post_reaction.reaction_type = :reactionType
-              AND popularity_reaction_user.deleted_at IS NULL
+              AND popularity_reaction_user.blocked_at IS NULL
           ) * 3
           + (
             SELECT COUNT(*)
@@ -493,7 +493,7 @@ export class PostsService {
             INNER JOIN users popularity_comment_author
               ON popularity_comment_author.user_id = popularity_post_comment.comment_author_id
             WHERE popularity_post_comment.post_id = post.post_id
-              AND popularity_comment_author.deleted_at IS NULL
+              AND popularity_comment_author.blocked_at IS NULL
           ) * 5
         )`,
         'popularityscore',
@@ -799,6 +799,8 @@ export class PostsService {
       queryBuilder.andWhere('post.status IN (:...statuses)', { statuses: effectiveStatuses });
     }
 
+    queryBuilder.andWhere('post.status != :removedStatus', { removedStatus: PostStatus.REMOVED });
+
     if (query.search?.trim()) {
       queryBuilder.andWhere(
         `(COALESCE(post.title, '') ILIKE :search OR COALESCE(post.description, '') ILIKE :search OR COALESCE(post.text, '') ILIKE :search OR COALESCE(post.origin_author_name, '') ILIKE :search)`,
@@ -887,7 +889,7 @@ export class PostsService {
       const rankedRows = await manager
         .getRepository(Post)
         .createQueryBuilder('post')
-        .innerJoin('post.author', 'author', 'author.deleted_at IS NULL')
+        .innerJoin('post.author', 'author', 'author.blocked_at IS NULL')
         .leftJoin(
           'post_reactions',
           'postReaction',
@@ -899,7 +901,7 @@ export class PostsService {
         .leftJoin(
           'users',
           'reactionUser',
-          'reactionUser.user_id = postReaction.user_id AND reactionUser.deleted_at IS NULL',
+          'reactionUser.user_id = postReaction.user_id AND reactionUser.blocked_at IS NULL',
         )
         .leftJoin(
           'post_comments',
@@ -909,7 +911,7 @@ export class PostsService {
         .leftJoin(
           'users',
           'commentAuthor',
-          'commentAuthor.user_id = postComment.comment_author_id AND commentAuthor.deleted_at IS NULL',
+          'commentAuthor.user_id = postComment.comment_author_id AND commentAuthor.blocked_at IS NULL',
         )
         .where('post.status = :status', { status: PostStatus.PUBLISHED })
         .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
@@ -1034,6 +1036,11 @@ export class PostsService {
         audioFileName: processedAudioFileName,
         sourceAudioFileName: null,
         status: nextStatus,
+        publishedAt:
+          nextStatus === PostStatus.PUBLISHED && post.status !== PostStatus.PUBLISHED
+            ? new Date()
+            : post.publishedAt,
+        removedAt: nextStatus === PostStatus.PUBLISHED ? null : post.removedAt,
         audioAnalysisStatus,
       });
 
@@ -1123,6 +1130,10 @@ export class PostsService {
       throw new ForbiddenException('Post is still processing and cannot be edited.');
     }
 
+    if (post.status === PostStatus.REMOVED) {
+      throw new ForbiddenException('Removed posts cannot be edited.');
+    }
+
     await this.dataSource.transaction(async (manager) => {
       const updatePayload: Partial<Post> = {};
 
@@ -1170,7 +1181,14 @@ export class PostsService {
       : PostStatus.DRAFT;
 
     if (updatedPost.status !== nextStatus) {
-      await this.postsRepository.update(updatedPost.postId, { status: nextStatus });
+      await this.postsRepository.update(updatedPost.postId, {
+        status: nextStatus,
+        publishedAt:
+          nextStatus === PostStatus.PUBLISHED && updatedPost.status !== PostStatus.PUBLISHED
+            ? new Date()
+            : updatedPost.publishedAt,
+        removedAt: nextStatus === PostStatus.PUBLISHED ? null : updatedPost.removedAt,
+      });
       updatedPost = await this.getPostById(updatedPost.postId);
       if (!updatedPost) {
         throw new NotFoundException('Post not found.');
@@ -1268,6 +1286,11 @@ export class PostsService {
 
   async deletePost(postId: number, requesterUserId: number): Promise<void> {
     const post = await this.requireOwnedPost(postId, requesterUserId);
+
+    if (post.status === PostStatus.REMOVED) {
+      throw new ForbiddenException('Removed posts cannot be deleted.');
+    }
+
     const audioFileName = post.audioFileName;
     const sourceAudioFileName = post.sourceAudioFileName;
 
@@ -1446,6 +1469,10 @@ export class PostsService {
       throw new ForbiddenException('You do not have access to this post.');
     }
 
+    if (post.status === PostStatus.REMOVED) {
+      throw new ForbiddenException('Removed posts are read-only.');
+    }
+
     return post;
   }
 
@@ -1454,7 +1481,7 @@ export class PostsService {
       where: {
         postId,
         status: PostStatus.PUBLISHED,
-        author: { deletedAt: IsNull() },
+        author: { blockedAt: IsNull() },
       },
       relations: { author: true },
       select: {
@@ -1482,7 +1509,7 @@ export class PostsService {
       return post;
     }
 
-    throw new ForbiddenException('You do not have access to this post.');
+    throw new NotFoundException('Post not found.');
   }
 
   private async syncPostCategories(
@@ -1626,7 +1653,7 @@ export class PostsService {
   private createPostDetailsQueryBuilder(_requesterUserId: number | null = null) {
     const queryBuilder = this.postsRepository
       .createQueryBuilder('post')
-      .innerJoinAndSelect('post.author', 'author', 'author.deleted_at IS NULL')
+      .innerJoinAndSelect('post.author', 'author', 'author.blocked_at IS NULL')
       .leftJoinAndSelect('author.subscription', 'authorSubscription')
       .leftJoinAndSelect('post.textParts', 'textPart')
       .leftJoinAndSelect('post.postCategories', 'postCategory')
@@ -1636,7 +1663,7 @@ export class PostsService {
           subQuery
             .select('COUNT(postReactionCount.post_reaction_id)')
             .from(PostReaction, 'postReactionCount')
-            .innerJoin('postReactionCount.user', 'postReactionUser', 'postReactionUser.deleted_at IS NULL')
+            .innerJoin('postReactionCount.user', 'postReactionUser', 'postReactionUser.blocked_at IS NULL')
             .where('postReactionCount.post_id = post.post_id')
             .andWhere('postReactionCount.reaction_type = :reactionType'),
         'post_likes_count',
@@ -1649,7 +1676,7 @@ export class PostsService {
             .innerJoin(
               'users',
               'postCommentAuthor',
-              'postCommentAuthor.user_id = postCommentCount.comment_author_id AND postCommentAuthor.deleted_at IS NULL',
+              'postCommentAuthor.user_id = postCommentCount.comment_author_id AND postCommentAuthor.blocked_at IS NULL',
             )
             .where('postCommentCount.post_id = post.post_id'),
         'post_comments_count',
@@ -1662,7 +1689,7 @@ export class PostsService {
           subQuery
             .select('requesterReaction.post_reaction_id')
             .from(PostReaction, 'requesterReaction')
-            .innerJoin('requesterReaction.user', 'requesterReactionUser', 'requesterReactionUser.deleted_at IS NULL')
+            .innerJoin('requesterReaction.user', 'requesterReactionUser', 'requesterReactionUser.blocked_at IS NULL')
             .where('requesterReaction.post_id = post.post_id')
             .andWhere('requesterReaction.user_id = :requesterUserId')
             .andWhere('requesterReaction.reaction_type = :reactionType')
@@ -1741,7 +1768,7 @@ export class PostsService {
   private async getPostLikesCount(postId: number): Promise<number> {
     const result = await this.postReactionsRepository
       .createQueryBuilder('reaction')
-      .innerJoin('reaction.user', 'user', 'user.deleted_at IS NULL')
+      .innerJoin('reaction.user', 'user', 'user.blocked_at IS NULL')
       .where('reaction.post_id = :postId', { postId })
       .andWhere('reaction.reaction_type = :reactionType', {
         reactionType: ReactionType.LIKE,
@@ -1833,7 +1860,7 @@ export class PostsService {
     const post = await this.postsRepository.findOne({
       where: {
         postId,
-        author: { deletedAt: IsNull() },
+        author: { blockedAt: IsNull() },
       },
       relations: { author: true },
       select: {
@@ -1845,6 +1872,10 @@ export class PostsService {
     });
 
     if (!post) {
+      throw new NotFoundException('Post not found.');
+    }
+
+    if (post.status === PostStatus.REMOVED) {
       throw new NotFoundException('Post not found.');
     }
 

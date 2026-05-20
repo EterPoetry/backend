@@ -735,7 +735,7 @@ export class AuthService {
       withDeleted: true,
     });
 
-    if (user?.deletedAt) {
+    if (user?.blockedAt) {
       throw createUserConflictsException(
         [
           payload.email ? getUserConflictError('email') : null,

@@ -292,7 +292,7 @@ export class CommentsService {
     const comment = await this.commentsRepository
       .createQueryBuilder('comment')
       .innerJoinAndSelect('comment.post', 'post')
-      .innerJoin('post.author', 'postAuthor', 'postAuthor.deleted_at IS NULL')
+      .innerJoin('post.author', 'postAuthor', 'postAuthor.blocked_at IS NULL')
       .where('comment.post_comment_id = :commentId', { commentId })
       .andWhere('post.status = :status', { status: PostStatus.PUBLISHED })
       .getOne();
@@ -334,8 +334,8 @@ export class CommentsService {
     return this.commentsRepository
       .createQueryBuilder('comment')
       .innerJoin('comment.post', 'post')
-      .innerJoin('post.author', 'postAuthor', 'postAuthor.deleted_at IS NULL')
-      .innerJoin('comment.commentAuthor', 'author', 'author.deleted_at IS NULL')
+      .innerJoin('post.author', 'postAuthor', 'postAuthor.blocked_at IS NULL')
+      .innerJoin('comment.commentAuthor', 'author', 'author.blocked_at IS NULL')
       .leftJoin('author.subscription', 'authorSubscription')
       .leftJoin(
         CommentReaction,
@@ -346,7 +346,7 @@ export class CommentsService {
       .leftJoin(
         'users',
         'requesterReactionUser',
-        'requesterReactionUser.user_id = requesterReaction.user_id AND requesterReactionUser.deleted_at IS NULL',
+        'requesterReactionUser.user_id = requesterReaction.user_id AND requesterReactionUser.blocked_at IS NULL',
       )
       .leftJoin(
         CommentReaction,
@@ -356,7 +356,7 @@ export class CommentsService {
       .leftJoin(
         'users',
         'authorReactionUser',
-        'authorReactionUser.user_id = authorReaction.user_id AND authorReactionUser.deleted_at IS NULL',
+        'authorReactionUser.user_id = authorReaction.user_id AND authorReactionUser.blocked_at IS NULL',
       )
       .where('comment.post_id = :postId', { postId })
       .select([
@@ -378,7 +378,7 @@ export class CommentsService {
         return subQuery
           .select('COUNT(reaction.comment_reaction_id)')
           .from(CommentReaction, 'reaction')
-          .innerJoin('reaction.user', 'reactionUser', 'reactionUser.deleted_at IS NULL')
+          .innerJoin('reaction.user', 'reactionUser', 'reactionUser.blocked_at IS NULL')
           .where('reaction.post_comment_id = comment.post_comment_id');
       }, 'likes_count');
   }
@@ -388,7 +388,7 @@ export class CommentsService {
       return subQuery
         .select('COUNT(reply.post_comment_id)')
         .from(PostComment, 'reply')
-        .innerJoin('reply.commentAuthor', 'replyAuthor', 'replyAuthor.deleted_at IS NULL')
+        .innerJoin('reply.commentAuthor', 'replyAuthor', 'replyAuthor.blocked_at IS NULL')
         .where('reply.reply_to_comment_id = comment.post_comment_id');
     }, 'replies_count');
   }
@@ -653,7 +653,7 @@ export class CommentsService {
     const queryBuilder = manager
       .getRepository(PostComment)
       .createQueryBuilder('comment')
-      .innerJoin('comment.commentAuthor', 'author', 'author.deleted_at IS NULL')
+      .innerJoin('comment.commentAuthor', 'author', 'author.blocked_at IS NULL')
       .where('comment.post_id = :postId', { postId })
       .select('comment.post_comment_id', 'commentId')
       .addSelect((subQuery) => {
@@ -663,7 +663,7 @@ export class CommentsService {
           .innerJoin(
             'users',
             'reactionUser',
-            'reactionUser.user_id = reaction.user_id AND reactionUser.deleted_at IS NULL',
+            'reactionUser.user_id = reaction.user_id AND reactionUser.blocked_at IS NULL',
           )
           .where('reaction.post_comment_id = comment.post_comment_id');
       }, 'likesCount')
@@ -758,7 +758,7 @@ export class CommentsService {
       where: {
         postId,
         status: PostStatus.PUBLISHED,
-        author: { deletedAt: IsNull() },
+        author: { blockedAt: IsNull() },
       },
       relations: {
         author: true,
@@ -776,8 +776,8 @@ export class CommentsService {
     const comment = await this.commentsRepository
       .createQueryBuilder('comment')
       .innerJoin('comment.post', 'post')
-      .innerJoin('post.author', 'postAuthor', 'postAuthor.deleted_at IS NULL')
-      .innerJoin('comment.commentAuthor', 'author', 'author.deleted_at IS NULL')
+      .innerJoin('post.author', 'postAuthor', 'postAuthor.blocked_at IS NULL')
+      .innerJoin('comment.commentAuthor', 'author', 'author.blocked_at IS NULL')
       .where('comment.post_comment_id = :commentId', { commentId })
       .andWhere('post.status = :status', { status: PostStatus.PUBLISHED })
       .getOne();
@@ -792,7 +792,7 @@ export class CommentsService {
   private async getCommentLikesCount(commentId: number): Promise<number> {
     const result = await this.commentReactionsRepository
       .createQueryBuilder('reaction')
-      .innerJoin('reaction.user', 'user', 'user.deleted_at IS NULL')
+      .innerJoin('reaction.user', 'user', 'user.blocked_at IS NULL')
       .where('reaction.post_comment_id = :commentId', { commentId })
       .select('COUNT(reaction.comment_reaction_id)', 'count')
       .getRawOne<{ count: string }>();
@@ -806,7 +806,7 @@ export class CommentsService {
   ): Promise<number> {
     const queryBuilder = this.commentsRepository
       .createQueryBuilder('comment')
-      .innerJoin('comment.commentAuthor', 'author', 'author.deleted_at IS NULL')
+      .innerJoin('comment.commentAuthor', 'author', 'author.blocked_at IS NULL')
       .where('comment.post_id = :postId', { postId });
 
     if (replyToCommentId === null) {
