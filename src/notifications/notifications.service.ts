@@ -17,6 +17,7 @@ import {
 import { BrowserPushNotificationsService } from './browser-push-notifications.service';
 import { NotificationEvent } from './entities/notification-event.entity';
 import { Notification } from './entities/notification.entity';
+import { NotificationsGateway } from './notifications.gateway';
 import { NotificationType } from './notification-type.enum';
 import {ComplaintReason} from "../common/enums/complaint-reason.enum";
 
@@ -116,6 +117,7 @@ export class NotificationsService {
     @InjectRepository(NotificationEvent)
     private readonly notificationEventsRepository: Repository<NotificationEvent>,
     private readonly browserPushNotificationsService: BrowserPushNotificationsService,
+    private readonly notificationsGateway: NotificationsGateway,
   ) {}
 
   async getNotifications(
@@ -197,6 +199,7 @@ export class NotificationsService {
       throw new NotFoundException('Notification not found.');
     }
 
+    this.emitCountsUpdatedAsync(recipientUserId);
     return { ok: true };
   }
 
@@ -214,6 +217,7 @@ export class NotificationsService {
       .andWhere('(is_read = false OR is_seen = false)')
       .execute();
 
+    this.emitCountsUpdatedAsync(recipientUserId);
     return { ok: true };
   }
 
@@ -236,10 +240,9 @@ export class NotificationsService {
       throw new NotFoundException('Notification not found.');
     }
 
-    return {
-      ok: true,
-      unseenCount: await this.getUnseenCount(recipientUserId),
-    };
+    const unseenCount = await this.getUnseenCount(recipientUserId);
+    this.emitCountsUpdatedAsync(recipientUserId, unseenCount);
+    return { ok: true, unseenCount };
   }
 
   async markAllNotificationsAsSeen(
@@ -256,10 +259,8 @@ export class NotificationsService {
       .andWhere('is_seen = false')
       .execute();
 
-    return {
-      ok: true,
-      unseenCount: 0,
-    };
+    this.emitCountsUpdatedAsync(recipientUserId, 0);
+    return { ok: true, unseenCount: 0 };
   }
 
   async recordPostLike(
@@ -773,22 +774,32 @@ export class NotificationsService {
         return;
       }
 
-      const unreadCount = await this.notificationsRepository.countBy({
-        recipientUserId,
-        isRead: false,
-        cancelledAt: IsNull(),
-      });
-      const unseenCount = await this.getUnseenCount(recipientUserId);
+      const [unreadCount, unseenCount] = await Promise.all([
+        this.notificationsRepository.countBy({
+          recipientUserId,
+          isRead: false,
+          cancelledAt: IsNull(),
+        }),
+        this.getUnseenCount(recipientUserId),
+      ]);
+
+      const mappedNotification = this.mapNotification(notification);
 
       await this.browserPushNotificationsService.sendNotification(
         recipientUserId,
-        this.mapNotification(notification),
+        mappedNotification,
         unreadCount,
         unseenCount,
       );
+
+      this.notificationsGateway.emitNotificationReceived(recipientUserId, {
+        notification: mappedNotification,
+        unreadCount,
+        unseenCount,
+      });
     } catch (error) {
       this.logger.warn(
-        `Browser push dispatch failed recipientUserId=${recipientUserId} groupKey=${groupKey}`,
+        `Notification dispatch failed recipientUserId=${recipientUserId} groupKey=${groupKey}`,
       );
     }
   }
@@ -962,5 +973,27 @@ export class NotificationsService {
       isSeen: false,
       cancelledAt: IsNull(),
     });
+  }
+
+  private getUnreadCount(recipientUserId: number): Promise<number> {
+    return this.notificationsRepository.countBy({
+      recipientUserId,
+      isRead: false,
+      cancelledAt: IsNull(),
+    });
+  }
+
+  private emitCountsUpdatedAsync(recipientUserId: number, knownUnseenCount?: number): void {
+    void (async () => {
+      try {
+        const [unreadCount, unseenCount] = await Promise.all([
+          this.getUnreadCount(recipientUserId),
+          knownUnseenCount !== undefined ? Promise.resolve(knownUnseenCount) : this.getUnseenCount(recipientUserId),
+        ]);
+        this.notificationsGateway.emitCountsUpdated(recipientUserId, { unreadCount, unseenCount });
+      } catch {
+        // swallow — WebSocket emit is a best-effort side effect
+      }
+    })();
   }
 }
