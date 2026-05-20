@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository, SelectQueryBuilder } from 'typeorm';
+import { DataSource, EntityManager, IsNull, MoreThan, Repository, SelectQueryBuilder } from 'typeorm';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { PostComment } from '../comments/entities/post-comment.entity';
 import { User } from '../users/entities/user.entity';
@@ -135,6 +135,7 @@ export class NotificationsService {
       .leftJoinAndSelect('notification.comment', 'comment')
       .leftJoinAndSelect('notification.postComplaint', 'postComplaint')
       .where('notification.recipient_user_id = :recipientUserId', { recipientUserId })
+      .andWhere('notification.cancelled_at IS NULL')
       .orderBy('notification.last_event_at', 'DESC')
       .addOrderBy('notification.notification_id', 'DESC');
 
@@ -157,10 +158,12 @@ export class NotificationsService {
     const unreadCount = await this.notificationsRepository.countBy({
       recipientUserId,
       isRead: false,
+      cancelledAt: IsNull(),
     });
     const unseenCount = await this.notificationsRepository.countBy({
       recipientUserId,
       isSeen: false,
+      cancelledAt: IsNull(),
     });
 
     return {
@@ -327,9 +330,7 @@ export class NotificationsService {
       return;
     }
 
-    await this.removeNotificationEvents({
-      sourcePostCommentIds,
-    });
+    await this.removeNotificationEvents({ sourcePostCommentIds }, false);
   }
 
   async recordCommentLike(
@@ -405,6 +406,18 @@ export class NotificationsService {
     const bucketStart = input.groupByHour ? this.getHourBucketStart(now) : now;
     const groupKey = this.buildGroupKey(input, bucketStart, now);
 
+    const recentlyCancelled = await this.notificationsRepository.findOne({
+      where: {
+        groupKey,
+        cancelledAt: MoreThan(new Date(now.getTime() - NOTIFICATION_UNDO_WINDOW_MINUTES * 60 * 1000)),
+      },
+      select: { notificationId: true },
+    });
+
+    if (recentlyCancelled) {
+      return;
+    }
+
     await this.dataSource.transaction(async (manager) => {
       const previewText = await this.resolvePreviewText(manager, input);
       const insertResult = await manager
@@ -465,7 +478,8 @@ export class NotificationsService {
             "last_event_at" = EXCLUDED."last_event_at",
             "read_at" = NULL,
             "seen_at" = NULL,
-            "preview_text" = COALESCE(EXCLUDED."preview_text", "notifications"."preview_text")
+            "preview_text" = COALESCE(EXCLUDED."preview_text", "notifications"."preview_text"),
+            "cancelled_at" = NULL
         `,
         [
           input.recipientUserId,
@@ -486,14 +500,17 @@ export class NotificationsService {
     void this.sendBrowserPushForGroupKey(input.recipientUserId, groupKey);
   }
 
-  private async removeNotificationEvents(filters: {
-    sourcePostReactionId?: number;
-    sourceCommentReactionId?: number;
-    sourceFollowerId?: number;
-    sourcePostCommentId?: number;
-    sourcePostCommentIds?: number[];
-    createdAfter?: Date;
-  }): Promise<void> {
+  private async removeNotificationEvents(
+    filters: {
+      sourcePostReactionId?: number;
+      sourceCommentReactionId?: number;
+      sourceFollowerId?: number;
+      sourcePostCommentId?: number;
+      sourcePostCommentIds?: number[];
+      createdAfter?: Date;
+    },
+    softCancel: boolean,
+  ): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       const queryBuilder = manager
         .createQueryBuilder()
@@ -548,7 +565,7 @@ export class NotificationsService {
       ];
 
       for (const groupKey of groupKeys) {
-        await this.syncNotificationGroup(manager, groupKey);
+        await this.syncNotificationGroup(manager, groupKey, softCancel);
       }
     });
   }
@@ -558,21 +575,32 @@ export class NotificationsService {
     sourceCommentReactionId?: number;
     sourceFollowerId?: number;
   }): Promise<void> {
-    await this.removeNotificationEvents({
-      ...filters,
-      createdAfter: new Date(
-        Date.now() - NOTIFICATION_UNDO_WINDOW_MINUTES * 60 * 1000,
-      ),
-    });
+    await this.removeNotificationEvents(
+      {
+        ...filters,
+        createdAfter: new Date(Date.now() - NOTIFICATION_UNDO_WINDOW_MINUTES * 60 * 1000),
+      },
+      true,
+    );
   }
 
-  private async syncNotificationGroup(manager: EntityManager, groupKey: string): Promise<void> {
+  private async syncNotificationGroup(
+    manager: EntityManager,
+    groupKey: string,
+    softCancel: boolean,
+  ): Promise<void> {
     const eventCount = await manager.getRepository(NotificationEvent).count({
       where: { groupKey },
     });
 
     if (eventCount === 0) {
-      await manager.getRepository(Notification).delete({ groupKey });
+      if (softCancel) {
+        await manager
+          .getRepository(Notification)
+          .update({ groupKey }, { cancelledAt: new Date(), eventsCount: 0 });
+      } else {
+        await manager.getRepository(Notification).delete({ groupKey });
+      }
       return;
     }
 
@@ -738,6 +766,7 @@ export class NotificationsService {
         .leftJoinAndSelect('notification.postComplaint', 'postComplaint')
         .where('notification.recipient_user_id = :recipientUserId', { recipientUserId })
         .andWhere('notification.group_key = :groupKey', { groupKey })
+        .andWhere('notification.cancelled_at IS NULL')
         .getOne();
 
       if (!notification) {
@@ -747,6 +776,7 @@ export class NotificationsService {
       const unreadCount = await this.notificationsRepository.countBy({
         recipientUserId,
         isRead: false,
+        cancelledAt: IsNull(),
       });
       const unseenCount = await this.getUnseenCount(recipientUserId);
 
@@ -930,6 +960,7 @@ export class NotificationsService {
     return this.notificationsRepository.countBy({
       recipientUserId,
       isSeen: false,
+      cancelledAt: IsNull(),
     });
   }
 }

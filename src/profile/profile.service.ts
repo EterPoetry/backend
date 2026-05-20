@@ -431,14 +431,14 @@ export class ProfileService {
       },
     });
 
+    if (relation) {
+      await this.notificationsService.removeFollow(relation.followerId);
+    }
+
     await this.followersRepository.delete({
       followerUserId,
       targetUserId,
     });
-
-    if (relation) {
-      await this.notificationsService.removeFollow(relation.followerId);
-    }
 
     return this.buildPublicProfileResponse(targetUser, followerUserId);
   }

@@ -85,6 +85,9 @@ export class Notification {
   @Column({ name: 'preview_text', type: 'text', nullable: true })
   previewText: string | null;
 
+  @Column({ name: 'cancelled_at', type: 'timestamptz', nullable: true })
+  cancelledAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

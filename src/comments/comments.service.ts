@@ -273,14 +273,14 @@ export class CommentsService {
       },
     });
 
+    if (reaction) {
+      await this.notificationsService.removeCommentLike(reaction.commentReactionId);
+    }
+
     await this.commentReactionsRepository.delete({
       postCommentId: comment.postCommentId,
       userId: requesterUserId,
     });
-
-    if (reaction) {
-      await this.notificationsService.removeCommentLike(reaction.commentReactionId);
-    }
 
     return {
       ok: true,

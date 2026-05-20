@@ -576,14 +576,14 @@ export class PostsService {
       },
     });
 
+    if (reaction) {
+      await this.notificationsService.removePostLike(reaction.postReactionId);
+    }
+
     await this.postReactionsRepository.delete({
       postId: post.postId,
       userId: requesterUserId,
     });
-
-    if (reaction) {
-      await this.notificationsService.removePostLike(reaction.postReactionId);
-    }
 
     return {
       ok: true,
