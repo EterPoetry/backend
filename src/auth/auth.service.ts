@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -164,10 +165,15 @@ export class AuthService {
   async login(dto: LoginDto): Promise<AuthResponse> {
     const user = await this.usersRepository.findOne({
       where: { email: dto.email },
+      withDeleted: true,
     });
 
     if (!user) {
       throw new UnauthorizedException('Invalid credentials.');
+    }
+
+    if (user.blockedAt) {
+      throw new ForbiddenException({ message: 'Your account has been blocked.', code: 'ACCOUNT_BLOCKED' });
     }
 
     if (!user.password) {
@@ -436,6 +442,23 @@ export class AuthService {
     }
 
     url.searchParams.set('accessToken', authResponse.accessToken);
+    return url.toString();
+  }
+
+  getGoogleFrontendErrorRedirectUrl(errorCode: string): string | null {
+    const frontendUrl = this.configService.get<string>('FRONTEND_AUTH_REDIRECT_URL');
+    if (!frontendUrl) {
+      return null;
+    }
+
+    let url: URL;
+    try {
+      url = new URL(frontendUrl);
+    } catch {
+      return null;
+    }
+
+    url.searchParams.set('error', errorCode);
     return url.toString();
   }
 
@@ -736,12 +759,7 @@ export class AuthService {
     });
 
     if (user?.blockedAt) {
-      throw createUserConflictsException(
-        [
-          payload.email ? getUserConflictError('email') : null,
-          getUserConflictError('googleId'),
-        ].filter((error): error is UserConflictError => error !== null),
-      );
+      throw new ForbiddenException({ message: 'Your account has been blocked.', code: 'ACCOUNT_BLOCKED' });
     }
 
     if (!user) {

@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
+  HttpException,
   Post,
   Query,
   Redirect,
@@ -43,15 +45,39 @@ export class AuthController {
     @Query('code') code: string,
     @Res() res: Response,
   ): Promise<void> {
-    const authResponse = await this.authService.googleCallback(code);
-    this.setRefreshCookie(res, authResponse.refreshToken);
-    const redirectUrl = this.authService.getGoogleFrontendRedirectUrl(authResponse);
-    if (redirectUrl) {
-      res.redirect(302, redirectUrl);
-      return;
+    try {
+      const authResponse = await this.authService.googleCallback(code);
+      this.setRefreshCookie(res, authResponse.refreshToken);
+      const redirectUrl = this.authService.getGoogleFrontendRedirectUrl(authResponse);
+      if (redirectUrl) {
+        res.redirect(302, redirectUrl);
+        return;
+      }
+      const { refreshToken, ...response } = authResponse;
+      res.status(200).json(response);
+    } catch (error) {
+      const errorCode = this.extractGoogleCallbackErrorCode(error);
+      const errorRedirectUrl = this.authService.getGoogleFrontendErrorRedirectUrl(errorCode);
+      if (errorRedirectUrl) {
+        res.redirect(302, errorRedirectUrl);
+        return;
+      }
+      throw error;
     }
-    const { refreshToken, ...response } = authResponse;
-    res.status(200).json(response);
+  }
+
+  private extractGoogleCallbackErrorCode(error: unknown): string {
+    if (error instanceof ForbiddenException) {
+      const response = error.getResponse();
+      if (typeof response === 'object' && response !== null && 'code' in response) {
+        return (response as { code: string }).code;
+      }
+      return 'FORBIDDEN';
+    }
+    if (error instanceof HttpException) {
+      return 'AUTH_FAILED';
+    }
+    return 'AUTH_FAILED';
   }
 
   @Post('google/mobile')
