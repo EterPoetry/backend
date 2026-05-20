@@ -5,9 +5,20 @@ import * as webPush from 'web-push';
 import { Repository } from 'typeorm';
 import { NotificationResponse } from './notifications.service';
 import { BrowserPushSubscription } from './entities/browser-push-subscription.entity';
+import { PushNotificationSettings } from './entities/push-notification-settings.entity';
 import { SaveBrowserPushSubscriptionDto } from './dto/save-browser-push-subscription.dto';
+import { UpdatePushSettingsDto } from './dto/update-push-settings.dto';
 import { NotificationType } from './notification-type.enum';
 import { COMPLAINT_REASON_LABELS } from '../common/enums/complaint-reason.enum';
+
+export interface PushSettingsResponse {
+  disabledTypes: NotificationType[];
+}
+
+export interface UpdatePushSettingsResponse {
+  ok: true;
+  disabledTypes: NotificationType[];
+}
 
 interface BrowserPushPayload {
   type: 'notifications.updated';
@@ -30,6 +41,8 @@ export class BrowserPushNotificationsService {
     private readonly configService: ConfigService,
     @InjectRepository(BrowserPushSubscription)
     private readonly browserPushSubscriptionsRepository: Repository<BrowserPushSubscription>,
+    @InjectRepository(PushNotificationSettings)
+    private readonly pushNotificationSettingsRepository: Repository<PushNotificationSettings>,
   ) {}
 
   isEnabled(): boolean {
@@ -73,6 +86,30 @@ export class BrowserPushNotificationsService {
     return { ok: true };
   }
 
+  async getSettings(userId: number): Promise<PushSettingsResponse> {
+    const settings = await this.pushNotificationSettingsRepository.findOne({
+      where: { userId },
+    });
+
+    return { disabledTypes: settings?.disabledTypes ?? [] };
+  }
+
+  async updateSettings(
+    userId: number,
+    dto: UpdatePushSettingsDto,
+  ): Promise<UpdatePushSettingsResponse> {
+    const existing = await this.pushNotificationSettingsRepository.findOne({
+      where: { userId },
+    });
+
+    const entity = existing ?? this.pushNotificationSettingsRepository.create({ userId });
+    entity.disabledTypes = dto.disabledTypes;
+
+    await this.pushNotificationSettingsRepository.save(entity);
+
+    return { ok: true, disabledTypes: entity.disabledTypes };
+  }
+
   async sendNotification(
     recipientUserId: number,
     notification: NotificationResponse,
@@ -80,6 +117,11 @@ export class BrowserPushNotificationsService {
     unseenCount: number,
   ): Promise<void> {
     if (!this.isEnabled()) {
+      return;
+    }
+
+    const settings = await this.getSettings(recipientUserId);
+    if (settings.disabledTypes.includes(notification.notificationType)) {
       return;
     }
 

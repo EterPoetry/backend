@@ -19,10 +19,15 @@ import {
 import { ComplaintReason } from '../common/enums/complaint-reason.enum';
 import { Request } from 'express';
 import { SaveBrowserPushSubscriptionDto } from './dto/save-browser-push-subscription.dto';
+import { UpdatePushSettingsDto } from './dto/update-push-settings.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { NotificationType } from './notification-type.enum';
 import { GetNotificationsQueryDto } from './dto/get-notifications-query.dto';
-import { BrowserPushNotificationsService } from './browser-push-notifications.service';
+import {
+  BrowserPushNotificationsService,
+  PushSettingsResponse,
+  UpdatePushSettingsResponse,
+} from './browser-push-notifications.service';
 import {
   NotificationActorResponse,
   NotificationResponse,
@@ -167,6 +172,16 @@ class SeenResponseDto extends OkResponseDto {
   unseenCount: number;
 }
 
+class PushSettingsResponseDto implements PushSettingsResponse {
+  @ApiProperty({ enum: NotificationType, enumName: 'NotificationType', isArray: true })
+  disabledTypes: NotificationType[];
+}
+
+class UpdatePushSettingsResponseDto extends OkResponseDto implements UpdatePushSettingsResponse {
+  @ApiProperty({ enum: NotificationType, enumName: 'NotificationType', isArray: true })
+  disabledTypes: NotificationType[];
+}
+
 @ApiTags('Notifications')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -230,5 +245,21 @@ export class NotificationsController {
     @Body() dto: SaveBrowserPushSubscriptionDto,
   ): Promise<OkResponseDto> {
     return this.browserPushNotificationsService.deleteSubscription(req.user.userId, dto.endpoint);
+  }
+
+  @Get('push/settings')
+  getPushSettings(
+    @Req() req: RequestWithUser,
+  ): Promise<PushSettingsResponseDto> {
+    return this.browserPushNotificationsService.getSettings(req.user.userId);
+  }
+
+  @ApiBody({ type: UpdatePushSettingsDto })
+  @Patch('push/settings')
+  updatePushSettings(
+    @Req() req: RequestWithUser,
+    @Body() dto: UpdatePushSettingsDto,
+  ): Promise<UpdatePushSettingsResponseDto> {
+    return this.browserPushNotificationsService.updateSettings(req.user.userId, dto);
   }
 }

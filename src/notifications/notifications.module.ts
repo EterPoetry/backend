@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BrowserPushSubscription } from './entities/browser-push-subscription.entity';
+import { PushNotificationSettings } from './entities/push-notification-settings.entity';
 import { BrowserPushNotificationsService } from './browser-push-notifications.service';
 import { NotificationEvent } from './entities/notification-event.entity';
 import { Notification } from './entities/notification.entity';
@@ -9,7 +10,7 @@ import { NotificationsService } from './notifications.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([BrowserPushSubscription, Notification, NotificationEvent]),
+    TypeOrmModule.forFeature([BrowserPushSubscription, PushNotificationSettings, Notification, NotificationEvent]),
   ],
   controllers: [NotificationsController],
   providers: [BrowserPushNotificationsService, NotificationsService],
