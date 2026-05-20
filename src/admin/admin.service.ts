@@ -250,13 +250,13 @@ export class AdminService {
         'appUser.blocked_at AS "blockedAt"',
       ])
       .addSelect(
-        `(SELECT COUNT(*)::int FROM posts post WHERE post.author_id = appUser.user_id)`,
+        `(SELECT COUNT(*)::int FROM posts post WHERE post.author_id = "appUser"."user_id")`,
         'postsCount',
       )
       .addSelect(
         `(SELECT COUNT(*)::int
             FROM post_complaints complaint
-           WHERE complaint.target_user_id = appUser.user_id
+           WHERE complaint.target_user_id = "appUser"."user_id"
              AND complaint.status = :resolvedStatus
              AND (complaint.expires_at IS NULL OR complaint.expires_at > NOW()))`,
         'activeViolationsCount',
