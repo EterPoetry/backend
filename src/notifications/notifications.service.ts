@@ -65,6 +65,8 @@ interface RecordNotificationInput {
   groupByHour: boolean;
 }
 
+const NOTIFICATION_UNDO_WINDOW_MINUTES = 5;
+
 @Injectable()
 export class NotificationsService {
   constructor(
@@ -176,7 +178,7 @@ export class NotificationsService {
   }
 
   async removePostLike(sourcePostReactionId: number): Promise<void> {
-    await this.removeNotificationEvents({
+    await this.removeNotificationEventsWithinUndoWindow({
       sourcePostReactionId,
     });
   }
@@ -251,7 +253,7 @@ export class NotificationsService {
   }
 
   async removeCommentLike(sourceCommentReactionId: number): Promise<void> {
-    await this.removeNotificationEvents({
+    await this.removeNotificationEventsWithinUndoWindow({
       sourceCommentReactionId,
     });
   }
@@ -272,7 +274,7 @@ export class NotificationsService {
   }
 
   async removeFollow(sourceFollowerId: number): Promise<void> {
-    await this.removeNotificationEvents({
+    await this.removeNotificationEventsWithinUndoWindow({
       sourceFollowerId,
     });
   }
@@ -381,6 +383,7 @@ export class NotificationsService {
     sourceFollowerId?: number;
     sourcePostCommentId?: number;
     sourcePostCommentIds?: number[];
+    createdAfter?: Date;
   }): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       const queryBuilder = manager
@@ -420,6 +423,12 @@ export class NotificationsService {
         });
       }
 
+      if (filters.createdAfter !== undefined) {
+        queryBuilder.andWhere('created_at >= :createdAfter', {
+          createdAfter: filters.createdAfter,
+        });
+      }
+
       const deleteResult = await queryBuilder.execute();
       const groupKeys = [
         ...new Set(
@@ -432,6 +441,19 @@ export class NotificationsService {
       for (const groupKey of groupKeys) {
         await this.syncNotificationGroup(manager, groupKey);
       }
+    });
+  }
+
+  private async removeNotificationEventsWithinUndoWindow(filters: {
+    sourcePostReactionId?: number;
+    sourceCommentReactionId?: number;
+    sourceFollowerId?: number;
+  }): Promise<void> {
+    await this.removeNotificationEvents({
+      ...filters,
+      createdAfter: new Date(
+        Date.now() - NOTIFICATION_UNDO_WINDOW_MINUTES * 60 * 1000,
+      ),
     });
   }
 
