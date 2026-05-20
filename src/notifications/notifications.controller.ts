@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   Patch,
@@ -9,18 +10,22 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBody,
   ApiBearerAuth,
   ApiProperty,
   ApiPropertyOptional,
   ApiTags,
 } from '@nestjs/swagger';
 import { Request } from 'express';
+import { SaveBrowserPushSubscriptionDto } from './dto/save-browser-push-subscription.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { NotificationType } from './notification-type.enum';
 import { GetNotificationsQueryDto } from './dto/get-notifications-query.dto';
+import { BrowserPushNotificationsService } from './browser-push-notifications.service';
 import {
   NotificationActorResponse,
   NotificationResponse,
+  NotificationTargetType,
   NotificationsService,
   PaginatedNotificationsResponse,
 } from './notifications.service';
@@ -59,14 +64,52 @@ class NotificationResponseDto implements NotificationResponse {
   @ApiProperty()
   isRead: boolean;
 
+  @ApiProperty()
+  isSeen: boolean;
+
   @ApiPropertyOptional({ nullable: true })
   postId: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  postSlug: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  postTitle: string | null;
 
   @ApiPropertyOptional({ nullable: true })
   commentId: number | null;
 
   @ApiPropertyOptional({ nullable: true })
   postComplaintId: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  previewText: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  commentPreviewText: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  replyPreviewText: string | null;
+
+  @ApiProperty({ enum: ['post', 'comment', 'profile', 'system'] })
+  targetType: NotificationTargetType;
+
+  @ApiProperty()
+  targetLabel: string;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      postId: { type: 'number', nullable: true },
+      postSlug: { type: 'string', nullable: true },
+      commentId: { type: 'number', nullable: true },
+      postComplaintId: { type: 'number', nullable: true },
+      username: { type: 'string', nullable: true },
+    },
+  })
+  targetRoutePayload: NotificationResponse['targetRoutePayload'];
 
   @ApiProperty()
   bucketStart: Date;
@@ -82,6 +125,9 @@ class NotificationResponseDto implements NotificationResponse {
 
   @ApiPropertyOptional({ nullable: true })
   readAt: Date | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  seenAt: Date | null;
 
   @ApiPropertyOptional({ type: () => NotificationActorResponseDto, nullable: true })
   lastActor: NotificationActorResponseDto | null;
@@ -102,6 +148,9 @@ class PaginatedNotificationsResponseDto implements PaginatedNotificationsRespons
 
   @ApiProperty()
   unreadCount: number;
+
+  @ApiProperty()
+  unseenCount: number;
 }
 
 class OkResponseDto {
@@ -109,12 +158,20 @@ class OkResponseDto {
   ok: true;
 }
 
+class SeenResponseDto extends OkResponseDto {
+  @ApiProperty()
+  unseenCount: number;
+}
+
 @ApiTags('Notifications')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    private readonly browserPushNotificationsService: BrowserPushNotificationsService,
+  ) {}
 
   @Get()
   getNotifications(
@@ -135,5 +192,39 @@ export class NotificationsController {
   @Patch('read-all')
   markAllNotificationsAsRead(@Req() req: RequestWithUser): Promise<OkResponseDto> {
     return this.notificationsService.markAllNotificationsAsRead(req.user.userId);
+  }
+
+  @Patch('seen')
+  markAllNotificationsAsSeen(@Req() req: RequestWithUser): Promise<SeenResponseDto> {
+    return this.notificationsService.markAllNotificationsAsSeen(req.user.userId);
+  }
+
+  @Patch(':notificationId/seen')
+  markNotificationAsSeen(
+    @Req() req: RequestWithUser,
+    @Param('notificationId', ParseIntPipe) notificationId: number,
+  ): Promise<SeenResponseDto> {
+    return this.notificationsService.markNotificationAsSeen(req.user.userId, notificationId);
+  }
+
+  @ApiBody({ type: SaveBrowserPushSubscriptionDto })
+  @Patch('browser-push/subscriptions')
+  saveBrowserPushSubscription(
+    @Req() req: RequestWithUser,
+    @Body() dto: SaveBrowserPushSubscriptionDto,
+  ): Promise<OkResponseDto> {
+    const userAgentHeader = req.headers['user-agent'];
+    const userAgent = typeof userAgentHeader === 'string' ? userAgentHeader : null;
+
+    return this.browserPushNotificationsService.saveSubscription(req.user.userId, dto, userAgent);
+  }
+
+  @ApiBody({ type: SaveBrowserPushSubscriptionDto })
+  @Patch('browser-push/subscriptions/delete')
+  deleteBrowserPushSubscription(
+    @Req() req: RequestWithUser,
+    @Body() dto: SaveBrowserPushSubscriptionDto,
+  ): Promise<OkResponseDto> {
+    return this.browserPushNotificationsService.deleteSubscription(req.user.userId, dto.endpoint);
   }
 }

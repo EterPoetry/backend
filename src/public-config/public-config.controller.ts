@@ -1,6 +1,10 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiProperty } from '@nestjs/swagger';
-import { PublicConfigResponse, PublicConfigService } from './public-config.service';
+import {
+  NotificationsConfig,
+  PublicConfigResponse,
+  PublicConfigService,
+} from './public-config.service';
 
 class RecordingConfigDto {
   @ApiProperty()
@@ -15,12 +19,23 @@ class SubscriptionConfigDto {
   priceUsd: number;
 }
 
+class NotificationsConfigDto implements NotificationsConfig {
+  @ApiProperty()
+  webPushEnabled: boolean;
+
+  @ApiProperty({ nullable: true })
+  webPushPublicKey: string | null;
+}
+
 class PublicConfigResponseDto implements PublicConfigResponse {
   @ApiProperty({ type: RecordingConfigDto })
   recording: RecordingConfigDto;
 
   @ApiProperty({ type: SubscriptionConfigDto })
   subscription: SubscriptionConfigDto;
+
+  @ApiProperty({ type: NotificationsConfigDto })
+  notifications: NotificationsConfigDto;
 }
 
 @Controller('config')

@@ -1,16 +1,25 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository, SelectQueryBuilder } from 'typeorm';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
+import { PostComment } from '../comments/entities/post-comment.entity';
 import { User } from '../users/entities/user.entity';
-import { GetNotificationsQueryDto } from './dto/get-notifications-query.dto';
+import {
+  GetNotificationsQueryDto,
+  NotificationStatusFilter,
+  NotificationTypeFilter,
+} from './dto/get-notifications-query.dto';
+import { BrowserPushNotificationsService } from './browser-push-notifications.service';
 import { NotificationEvent } from './entities/notification-event.entity';
 import { Notification } from './entities/notification.entity';
 import { NotificationType } from './notification-type.enum';
+
+export type NotificationTargetType = 'post' | 'comment' | 'profile' | 'system';
 
 export interface NotificationActorResponse {
   userId: number;
@@ -25,14 +34,30 @@ export interface NotificationResponse {
   notificationType: NotificationType;
   eventsCount: number;
   isRead: boolean;
+  isSeen: boolean;
   postId: number | null;
+  postSlug: string | null;
+  postTitle: string | null;
   commentId: number | null;
   postComplaintId: number | null;
+  previewText: string | null;
+  commentPreviewText: string | null;
+  replyPreviewText: string | null;
+  targetType: NotificationTargetType;
+  targetLabel: string;
+  targetRoutePayload: {
+    postId: number | null;
+    postSlug: string | null;
+    commentId: number | null;
+    postComplaintId: number | null;
+    username: string | null;
+  } | null;
   bucketStart: Date;
   bucketSizeMinutes: number;
   lastEventAt: Date;
   createdAt: Date;
   readAt: Date | null;
+  seenAt: Date | null;
   lastActor: NotificationActorResponse | null;
 }
 
@@ -42,11 +67,14 @@ export interface PaginatedNotificationsResponse {
   nextCursor: string | null;
   hasMore: boolean;
   unreadCount: number;
+  unseenCount: number;
 }
 
 interface NotificationCursorPayload {
   lastEventAt: string;
   notificationId: number;
+  status: NotificationStatusFilter;
+  type: NotificationTypeFilter | null;
 }
 
 interface RecordNotificationInput {
@@ -66,9 +94,18 @@ interface RecordNotificationInput {
 }
 
 const NOTIFICATION_UNDO_WINDOW_MINUTES = 5;
+const NOTIFICATION_PREVIEW_MAX_LENGTH = 160;
+const NOTIFICATION_TYPE_GROUPS: Record<Exclude<NotificationTypeFilter, 'mentions'>, NotificationType[]> = {
+  comments: [NotificationType.POST_COMMENTED, NotificationType.COMMENT_REPLIED],
+  follows: [NotificationType.USER_FOLLOWED],
+  likes: [NotificationType.POST_LIKED, NotificationType.COMMENT_LIKED],
+  system: [NotificationType.POST_VIOLATION_CONFIRMED],
+};
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
@@ -76,13 +113,14 @@ export class NotificationsService {
     private readonly notificationsRepository: Repository<Notification>,
     @InjectRepository(NotificationEvent)
     private readonly notificationEventsRepository: Repository<NotificationEvent>,
+    private readonly browserPushNotificationsService: BrowserPushNotificationsService,
   ) {}
 
   async getNotifications(
     recipientUserId: number,
     query: GetNotificationsQueryDto,
   ): Promise<PaginatedNotificationsResponse> {
-    const cursor = this.decodeCursor(query.cursor);
+    const cursor = this.decodeCursor(query.cursor, query);
     const queryBuilder = this.notificationsRepository
       .createQueryBuilder('notification')
       .leftJoinAndSelect(
@@ -91,9 +129,13 @@ export class NotificationsService {
         'lastActor.deleted_at IS NULL',
       )
       .leftJoinAndSelect('lastActor.subscription', 'lastActorSubscription')
+      .leftJoinAndSelect('notification.post', 'post')
+      .leftJoinAndSelect('notification.comment', 'comment')
       .where('notification.recipient_user_id = :recipientUserId', { recipientUserId })
       .orderBy('notification.last_event_at', 'DESC')
       .addOrderBy('notification.notification_id', 'DESC');
+
+    this.applyQueryFilters(queryBuilder, query);
 
     if (cursor) {
       queryBuilder.andWhere(
@@ -113,13 +155,18 @@ export class NotificationsService {
       recipientUserId,
       isRead: false,
     });
+    const unseenCount = await this.notificationsRepository.countBy({
+      recipientUserId,
+      isSeen: false,
+    });
 
     return {
       items: pageRows.map((notification) => this.mapNotification(notification)),
       limit: query.limit,
-      nextCursor: hasMore && lastRow ? this.encodeCursor(lastRow) : null,
+      nextCursor: hasMore && lastRow ? this.encodeCursor(lastRow, query) : null,
       hasMore,
       unreadCount,
+      unseenCount,
     };
   }
 
@@ -132,7 +179,9 @@ export class NotificationsService {
       .update(Notification)
       .set({
         isRead: true,
+        isSeen: true,
         readAt: () => 'NOW()',
+        seenAt: () => 'COALESCE("seen_at", NOW())',
       })
       .where('notification_id = :notificationId', { notificationId })
       .andWhere('recipient_user_id = :recipientUserId', { recipientUserId })
@@ -151,13 +200,60 @@ export class NotificationsService {
       .update(Notification)
       .set({
         isRead: true,
+        isSeen: true,
         readAt: () => 'NOW()',
+        seenAt: () => 'COALESCE("seen_at", NOW())',
       })
       .where('recipient_user_id = :recipientUserId', { recipientUserId })
-      .andWhere('is_read = false')
+      .andWhere('(is_read = false OR is_seen = false)')
       .execute();
 
     return { ok: true };
+  }
+
+  async markNotificationAsSeen(
+    recipientUserId: number,
+    notificationId: number,
+  ): Promise<{ ok: true; unseenCount: number }> {
+    const result = await this.notificationsRepository
+      .createQueryBuilder()
+      .update(Notification)
+      .set({
+        isSeen: true,
+        seenAt: () => 'COALESCE("seen_at", NOW())',
+      })
+      .where('notification_id = :notificationId', { notificationId })
+      .andWhere('recipient_user_id = :recipientUserId', { recipientUserId })
+      .execute();
+
+    if (!result.affected) {
+      throw new NotFoundException('Notification not found.');
+    }
+
+    return {
+      ok: true,
+      unseenCount: await this.getUnseenCount(recipientUserId),
+    };
+  }
+
+  async markAllNotificationsAsSeen(
+    recipientUserId: number,
+  ): Promise<{ ok: true; unseenCount: number }> {
+    await this.notificationsRepository
+      .createQueryBuilder()
+      .update(Notification)
+      .set({
+        isSeen: true,
+        seenAt: () => 'COALESCE("seen_at", NOW())',
+      })
+      .where('recipient_user_id = :recipientUserId', { recipientUserId })
+      .andWhere('is_seen = false')
+      .execute();
+
+    return {
+      ok: true,
+      unseenCount: 0,
+    };
   }
 
   async recordPostLike(
@@ -307,6 +403,7 @@ export class NotificationsService {
     const groupKey = this.buildGroupKey(input, bucketStart, now);
 
     await this.dataSource.transaction(async (manager) => {
+      const previewText = await this.resolvePreviewText(manager, input);
       const insertResult = await manager
         .createQueryBuilder()
         .insert()
@@ -346,20 +443,26 @@ export class NotificationsService {
             "group_key",
             "events_count",
             "is_read",
+            "is_seen",
             "bucket_start",
             "bucket_size_minutes",
             "last_event_at",
             "created_at",
-            "read_at"
+            "read_at",
+            "seen_at",
+            "preview_text"
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, 1, false, $8, $9, $10, $10, NULL)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 1, false, false, $8, $9, $10, $10, NULL, NULL, $11)
           ON CONFLICT ("group_key")
           DO UPDATE SET
             "last_actor_user_id" = COALESCE(EXCLUDED."last_actor_user_id", "notifications"."last_actor_user_id"),
             "events_count" = "notifications"."events_count" + 1,
             "is_read" = false,
+            "is_seen" = false,
             "last_event_at" = EXCLUDED."last_event_at",
-            "read_at" = NULL
+            "read_at" = NULL,
+            "seen_at" = NULL,
+            "preview_text" = COALESCE(EXCLUDED."preview_text", "notifications"."preview_text")
         `,
         [
           input.recipientUserId,
@@ -372,9 +475,12 @@ export class NotificationsService {
           bucketStart,
           input.bucketSizeMinutes,
           now,
+          previewText,
         ],
       );
     });
+
+    void this.sendBrowserPushForGroupKey(input.recipientUserId, groupKey);
   }
 
   private async removeNotificationEvents(filters: {
@@ -486,6 +592,7 @@ export class NotificationsService {
         eventsCount: eventCount,
         lastActorUserId: latestEvent.actorUserId,
         lastEventAt: latestEvent.createdAt,
+        previewText: await this.resolvePreviewTextFromEvent(manager, latestEvent),
       },
     );
   }
@@ -520,17 +627,22 @@ export class NotificationsService {
     );
   }
 
-  private encodeCursor(notification: Notification): string {
+  private encodeCursor(notification: Notification, query: GetNotificationsQueryDto): string {
     return Buffer.from(
       JSON.stringify({
         lastEventAt: notification.lastEventAt.toISOString(),
         notificationId: notification.notificationId,
+        status: query.status,
+        type: query.type ?? null,
       }),
       'utf8',
     ).toString('base64url');
   }
 
-  private decodeCursor(cursor?: string): NotificationCursorPayload | null {
+  private decodeCursor(
+    cursor: string | undefined,
+    query: GetNotificationsQueryDto,
+  ): NotificationCursorPayload | null {
     if (!cursor) {
       return null;
     }
@@ -544,7 +656,9 @@ export class NotificationsService {
         !parsed ||
         Number.isNaN(Date.parse(parsed.lastEventAt)) ||
         !Number.isInteger(parsed.notificationId) ||
-        parsed.notificationId <= 0
+        parsed.notificationId <= 0 ||
+        parsed.status !== query.status ||
+        (parsed.type ?? null) !== (query.type ?? null)
       ) {
         throw new Error('Invalid cursor payload.');
       }
@@ -556,19 +670,34 @@ export class NotificationsService {
   }
 
   private mapNotification(notification: Notification): NotificationResponse {
+    const targetType = this.getTargetType(notification);
+    const targetLabel = this.getTargetLabel(notification);
+    const commentPreviewText = this.getCommentPreviewText(notification);
+    const replyPreviewText = this.getReplyPreviewText(notification);
+
     return {
       notificationId: notification.notificationId,
       notificationType: notification.notificationType,
       eventsCount: notification.eventsCount,
       isRead: notification.isRead,
+      isSeen: notification.isSeen,
       postId: notification.postId,
+      postSlug: notification.post?.slug ?? null,
+      postTitle: notification.post?.title ?? null,
       commentId: notification.commentId,
       postComplaintId: notification.postComplaintId,
+      previewText: notification.previewText,
+      commentPreviewText,
+      replyPreviewText,
+      targetType,
+      targetLabel,
+      targetRoutePayload: this.buildTargetRoutePayload(notification, targetType),
       bucketStart: notification.bucketStart,
       bucketSizeMinutes: notification.bucketSizeMinutes,
       lastEventAt: notification.lastEventAt,
       createdAt: notification.createdAt,
       readAt: notification.readAt,
+      seenAt: notification.seenAt,
       lastActor: this.mapNotificationActor(notification.lastActor),
     };
   }
@@ -585,5 +714,217 @@ export class NotificationsService {
       photo: user.photo,
       isPremium: user.subscription?.status === SubscriptionStatus.ACTIVE,
     };
+  }
+
+  private async sendBrowserPushForGroupKey(
+    recipientUserId: number,
+    groupKey: string,
+  ): Promise<void> {
+    try {
+      const notification = await this.notificationsRepository
+        .createQueryBuilder('notification')
+        .leftJoinAndSelect(
+          'notification.lastActor',
+          'lastActor',
+          'lastActor.deleted_at IS NULL',
+        )
+        .leftJoinAndSelect('lastActor.subscription', 'lastActorSubscription')
+        .leftJoinAndSelect('notification.post', 'post')
+        .leftJoinAndSelect('notification.comment', 'comment')
+        .where('notification.recipient_user_id = :recipientUserId', { recipientUserId })
+        .andWhere('notification.group_key = :groupKey', { groupKey })
+        .getOne();
+
+      if (!notification) {
+        return;
+      }
+
+      const unreadCount = await this.notificationsRepository.countBy({
+        recipientUserId,
+        isRead: false,
+      });
+      const unseenCount = await this.getUnseenCount(recipientUserId);
+
+      await this.browserPushNotificationsService.sendNotification(
+        recipientUserId,
+        this.mapNotification(notification),
+        unreadCount,
+        unseenCount,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Browser push dispatch failed recipientUserId=${recipientUserId} groupKey=${groupKey}`,
+      );
+    }
+  }
+
+  private applyQueryFilters(
+    queryBuilder: SelectQueryBuilder<Notification>,
+    query: GetNotificationsQueryDto,
+  ): void {
+    if (query.status === 'unread') {
+      queryBuilder.andWhere('notification.is_read = false');
+    }
+
+    if (!query.type) {
+      return;
+    }
+
+    if (query.type === 'mentions') {
+      queryBuilder.andWhere('1 = 0');
+      return;
+    }
+
+    const notificationTypes = NOTIFICATION_TYPE_GROUPS[query.type];
+    queryBuilder.andWhere('notification.notification_type IN (:...notificationTypes)', {
+      notificationTypes,
+    });
+  }
+
+  private getTargetType(notification: Notification): NotificationTargetType {
+    switch (notification.notificationType) {
+      case NotificationType.USER_FOLLOWED:
+        return 'profile';
+      case NotificationType.COMMENT_LIKED:
+      case NotificationType.COMMENT_REPLIED:
+        return 'comment';
+      case NotificationType.POST_VIOLATION_CONFIRMED:
+        return 'system';
+      case NotificationType.POST_LIKED:
+      case NotificationType.POST_COMMENTED:
+        return 'post';
+    }
+  }
+
+  private getTargetLabel(notification: Notification): string {
+    switch (notification.notificationType) {
+      case NotificationType.USER_FOLLOWED:
+        return 'Profile';
+      case NotificationType.COMMENT_LIKED:
+      case NotificationType.COMMENT_REPLIED:
+        return 'Your comment';
+      case NotificationType.POST_VIOLATION_CONFIRMED:
+        return 'System';
+      case NotificationType.POST_LIKED:
+      case NotificationType.POST_COMMENTED:
+        return 'Your post';
+    }
+  }
+
+  private buildTargetRoutePayload(
+    notification: Notification,
+    targetType: NotificationTargetType,
+  ): NotificationResponse['targetRoutePayload'] {
+    if (targetType === 'profile') {
+      return {
+        postId: null,
+        postSlug: null,
+        commentId: null,
+        postComplaintId: null,
+        username: notification.lastActor?.deletedAt ? null : (notification.lastActor?.username ?? null),
+      };
+    }
+
+    return {
+      postId: notification.postId,
+      postSlug: notification.post?.slug ?? null,
+      commentId: notification.commentId,
+      postComplaintId: notification.postComplaintId,
+      username: null,
+    };
+  }
+
+  private getCommentPreviewText(notification: Notification): string | null {
+    switch (notification.notificationType) {
+      case NotificationType.POST_COMMENTED:
+        return notification.previewText;
+      case NotificationType.COMMENT_LIKED:
+      case NotificationType.COMMENT_REPLIED:
+        return notification.comment?.commentText ?? null;
+      default:
+        return null;
+    }
+  }
+
+  private getReplyPreviewText(notification: Notification): string | null {
+    return notification.notificationType === NotificationType.COMMENT_REPLIED
+      ? notification.previewText
+      : null;
+  }
+
+  private async resolvePreviewText(
+    manager: EntityManager,
+    input: RecordNotificationInput,
+  ): Promise<string | null> {
+    switch (input.notificationType) {
+      case NotificationType.POST_COMMENTED:
+      case NotificationType.COMMENT_REPLIED:
+        if (input.sourcePostCommentId === undefined || input.sourcePostCommentId === null) {
+          return null;
+        }
+
+        return this.loadCommentPreviewText(manager, input.sourcePostCommentId);
+      case NotificationType.COMMENT_LIKED:
+        if (input.commentId === undefined || input.commentId === null) {
+          return null;
+        }
+
+        return this.loadCommentPreviewText(manager, input.commentId);
+      default:
+        return null;
+    }
+  }
+
+  private async resolvePreviewTextFromEvent(
+    manager: EntityManager,
+    event: NotificationEvent,
+  ): Promise<string | null> {
+    switch (event.notificationType) {
+      case NotificationType.POST_COMMENTED:
+      case NotificationType.COMMENT_REPLIED:
+        return event.sourcePostCommentId
+          ? this.loadCommentPreviewText(manager, event.sourcePostCommentId)
+          : null;
+      case NotificationType.COMMENT_LIKED:
+        return event.commentId ? this.loadCommentPreviewText(manager, event.commentId) : null;
+      default:
+        return null;
+    }
+  }
+
+  private async loadCommentPreviewText(
+    manager: EntityManager,
+    commentId: number,
+  ): Promise<string | null> {
+    const comment = await manager.getRepository(PostComment).findOne({
+      where: { postCommentId: commentId },
+      select: {
+        commentText: true,
+      },
+    });
+
+    return this.truncatePreviewText(comment?.commentText ?? null);
+  }
+
+  private truncatePreviewText(value: string | null): string | null {
+    if (!value) {
+      return null;
+    }
+
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      return null;
+    }
+
+    return normalized.length <= NOTIFICATION_PREVIEW_MAX_LENGTH
+      ? normalized
+      : `${normalized.slice(0, NOTIFICATION_PREVIEW_MAX_LENGTH - 1).trimEnd()}…`;
+  }
+
+  private getUnseenCount(recipientUserId: number): Promise<number> {
+    return this.notificationsRepository.countBy({
+      recipientUserId,
+      isSeen: false,
+    });
   }
 }

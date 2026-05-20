@@ -64,6 +64,9 @@ export class Notification {
   @Column({ name: 'is_read', type: 'boolean', default: false })
   isRead: boolean;
 
+  @Column({ name: 'is_seen', type: 'boolean', default: false })
+  isSeen: boolean;
+
   @Column({ name: 'bucket_start', type: 'timestamptz' })
   bucketStart: Date;
 
@@ -75,6 +78,12 @@ export class Notification {
 
   @Column({ name: 'read_at', type: 'timestamptz', nullable: true })
   readAt: Date | null;
+
+  @Column({ name: 'seen_at', type: 'timestamptz', nullable: true })
+  seenAt: Date | null;
+
+  @Column({ name: 'preview_text', type: 'text', nullable: true })
+  previewText: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

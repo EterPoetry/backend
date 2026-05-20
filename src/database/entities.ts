@@ -19,6 +19,7 @@ import { Card } from '../subscriptions/entities/card.entity';
 import { Admin } from '../admin/entities/admin.entity';
 import { PostComplaint } from '../complaints/entities/post-complaint.entity';
 import { Follower } from '../followers/entities/follower.entity';
+import { BrowserPushSubscription } from '../notifications/entities/browser-push-subscription.entity';
 import { Notification } from '../notifications/entities/notification.entity';
 import { NotificationEvent } from '../notifications/entities/notification-event.entity';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
@@ -46,6 +47,7 @@ export const ENTITIES = [
   Admin,
   PostComplaint,
   Follower,
+  BrowserPushSubscription,
   Notification,
   NotificationEvent,
   RefreshToken,
