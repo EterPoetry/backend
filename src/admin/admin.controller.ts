@@ -122,6 +122,8 @@ class AdminUserViolationResponseDto implements AdminUserViolationResponse {
   postId: number;
   @ApiPropertyOptional({ nullable: true })
   postRemovedAt: Date | null;
+  @ApiPropertyOptional({ nullable: true })
+  postRestorationDeadline: Date | null;
 }
 
 class AdminUserDetailsResponseDto extends AdminUserListItemResponseDto implements AdminUserDetailsResponse {
@@ -176,6 +178,8 @@ class AdminComplaintTargetPostDto {
   title: string | null;
   @ApiPropertyOptional({ nullable: true })
   removedAt: Date | null;
+  @ApiPropertyOptional({ nullable: true })
+  postRestorationDeadline: Date | null;
 }
 
 class AdminComplaintProcessedByAdminDto {
@@ -229,7 +233,7 @@ class AdminOverviewStatsResponseDto implements AdminOverviewStatsResponse {
   @ApiProperty()
   posts: { total: number; published: number; removed: number };
   @ApiProperty()
-  complaints: { total: number; pending: number; resolved: number; dismissed: number };
+  complaints: { total: number; pending: number; resolved: number; dismissed: number; cancelled: number };
 }
 
 class AdminStatsTimeseriesPointResponseDto implements AdminStatsTimeseriesPointResponse {
@@ -240,7 +244,7 @@ class AdminStatsTimeseriesPointResponseDto implements AdminStatsTimeseriesPointR
   @ApiProperty()
   posts: { total: number; published: number; removed: number };
   @ApiProperty()
-  complaints: { total: number; pending: number; resolved: number; dismissed: number };
+  complaints: { total: number; pending: number; resolved: number; dismissed: number; cancelled: number };
 }
 
 class AdminStatsTimeseriesResponseDto implements AdminStatsTimeseriesResponse {

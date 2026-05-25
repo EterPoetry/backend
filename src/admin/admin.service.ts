@@ -73,6 +73,7 @@ export interface AdminUserViolationResponse {
   adminId: number | null;
   postId: number;
   postRemovedAt: Date | null;
+  postRestorationDeadline: Date | null;
 }
 
 export interface AdminUserDetailsResponse extends AdminUserListItemResponse {
@@ -112,6 +113,7 @@ export interface AdminComplaintResponse {
     slug: string;
     title: string | null;
     removedAt: Date | null;
+    postRestorationDeadline: Date | null;
   };
   processedByAdmin: {
     adminId: number;
@@ -123,14 +125,14 @@ export interface AdminComplaintResponse {
 export interface AdminOverviewStatsResponse {
   users: { total: number; active: number; blocked: number };
   posts: { total: number; published: number; removed: number };
-  complaints: { total: number; pending: number; resolved: number; dismissed: number };
+  complaints: { total: number; pending: number; resolved: number; dismissed: number; cancelled: number };
 }
 
 export interface AdminStatsTimeseriesPointResponse {
   bucketStart: string;
   users: { total: number; active: number; blocked: number };
   posts: { total: number; published: number; removed: number };
-  complaints: { total: number; pending: number; resolved: number; dismissed: number };
+  complaints: { total: number; pending: number; resolved: number; dismissed: number; cancelled: number };
 }
 
 export interface AdminStatsTimeseriesResponse {
@@ -346,6 +348,7 @@ export class AdminService {
         adminId: violation.adminId,
         postId: violation.targetPostId,
         postRemovedAt: violation.targetPost.removedAt,
+        postRestorationDeadline: this.computePostRestorationDeadline(violation.targetPost.removedAt),
       })),
     };
   }
@@ -422,7 +425,7 @@ export class AdminService {
       await this.postsRepository.update(post.postId, { removedAt: null });
     }
 
-    complaint.expiresAt = new Date();
+    complaint.status = ComplaintStatus.CANCELLED;
     await this.complaintsRepository.save(complaint);
 
     await this.notificationsService.recordPostViolationRemoved(userId, post.postId, complaintId);
@@ -688,7 +691,7 @@ export class AdminService {
   }
 
   async getOverviewStats(): Promise<AdminOverviewStatsResponse> {
-    const [totalUsers, activeUsers, blockedUsers, totalPosts, publishedPosts, removedPosts, totalComplaints, pendingComplaints, resolvedComplaints, dismissedComplaints] =
+    const [totalUsers, activeUsers, blockedUsers, totalPosts, publishedPosts, removedPosts, totalComplaints, pendingComplaints, resolvedComplaints, dismissedComplaints, cancelledComplaints] =
       await Promise.all([
         this.usersRepository.count({ withDeleted: true }),
         this.usersRepository.count(),
@@ -700,6 +703,7 @@ export class AdminService {
         this.complaintsRepository.count({ where: { status: ComplaintStatus.PENDING } }),
         this.complaintsRepository.count({ where: { status: ComplaintStatus.RESOLVED } }),
         this.complaintsRepository.count({ where: { status: ComplaintStatus.DISMISSED } }),
+        this.complaintsRepository.count({ where: { status: ComplaintStatus.CANCELLED } }),
       ]);
 
     return {
@@ -718,6 +722,7 @@ export class AdminService {
         pending: pendingComplaints,
         resolved: resolvedComplaints,
         dismissed: dismissedComplaints,
+        cancelled: cancelledComplaints,
       },
     };
   }
@@ -769,7 +774,11 @@ export class AdminService {
         (SELECT COUNT(*) FROM post_complaints c
           WHERE c.status = 'dismissed'
             AND c.processed_at IS NOT NULL
-            AND c.processed_at < bucket_start + $3::interval) AS dismissed
+            AND c.processed_at < bucket_start + $3::interval) AS dismissed,
+        (SELECT COUNT(*) FROM post_complaints c
+          WHERE c.status = 'cancelled'
+            AND c.processed_at IS NOT NULL
+            AND c.processed_at < bucket_start + $3::interval) AS cancelled
       FROM generate_series($1::timestamptz, $2::timestamptz, $3::interval) AS bucket_start
       `,
       [from.toISOString(), to.toISOString(), step],
@@ -796,6 +805,7 @@ export class AdminService {
           pending: Number(complaintsRow.pending),
           resolved: Number(complaintsRow.resolved),
           dismissed: Number(complaintsRow.dismissed),
+          cancelled: Number(complaintsRow.cancelled),
         },
       };
     });
@@ -869,6 +879,11 @@ export class AdminService {
     return Math.floor(parsedValue);
   }
 
+  private computePostRestorationDeadline(removedAt: Date | null): Date | null {
+    if (!removedAt) return null;
+    return new Date(removedAt.getTime() + POST_REMOVAL_CLEANUP_DAYS * 24 * 60 * 60 * 1000);
+  }
+
   private getViolationExpiryDate(): Date {
     return new Date(Date.now() + DEFAULT_VIOLATION_DURATION_DAYS * 24 * 60 * 60 * 1000);
   }
@@ -939,6 +954,7 @@ export class AdminService {
         slug: complaint.targetPost.slug,
         title: complaint.targetPost.title,
         removedAt: complaint.targetPost.removedAt,
+        postRestorationDeadline: this.computePostRestorationDeadline(complaint.targetPost.removedAt),
       },
       processedByAdmin: complaint.admin
         ? {
