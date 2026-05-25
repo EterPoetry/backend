@@ -15,7 +15,6 @@ import { ApiBearerAuth, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestj
 import { Request } from 'express';
 import { ComplaintReason } from '../common/enums/complaint-reason.enum';
 import { ComplaintStatus } from '../common/enums/complaint-status.enum';
-import { PostStatus } from '../common/enums/post-status.enum';
 import {
   AdminCategoryResponse,
   AdminComplaintResponse,
@@ -121,8 +120,8 @@ class AdminUserViolationResponseDto implements AdminUserViolationResponse {
   adminId: number | null;
   @ApiProperty()
   postId: number;
-  @ApiProperty({ enum: PostStatus, enumName: 'PostStatus' })
-  postStatus: PostStatus;
+  @ApiPropertyOptional({ nullable: true })
+  postRemovedAt: Date | null;
 }
 
 class AdminUserDetailsResponseDto extends AdminUserListItemResponseDto implements AdminUserDetailsResponse {
@@ -175,8 +174,8 @@ class AdminComplaintTargetPostDto {
   slug: string;
   @ApiPropertyOptional({ nullable: true })
   title: string | null;
-  @ApiProperty({ enum: PostStatus, enumName: 'PostStatus' })
-  status: PostStatus;
+  @ApiPropertyOptional({ nullable: true })
+  removedAt: Date | null;
 }
 
 class AdminComplaintProcessedByAdminDto {

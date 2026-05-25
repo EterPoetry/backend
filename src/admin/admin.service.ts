@@ -32,6 +32,7 @@ import { PostComplaint } from '../complaints/entities/post-complaint.entity';
 
 const DEFAULT_VIOLATION_DURATION_DAYS = 60;
 const DEFAULT_MAX_ACTIVE_VIOLATIONS_BEFORE_BLOCK = 3;
+const POST_REMOVAL_CLEANUP_DAYS = 30;
 
 export interface OffsetPaginatedResponse<T> {
   items: T[];
@@ -71,7 +72,7 @@ export interface AdminUserViolationResponse {
   expiresAt: Date | null;
   adminId: number | null;
   postId: number;
-  postStatus: PostStatus;
+  postRemovedAt: Date | null;
 }
 
 export interface AdminUserDetailsResponse extends AdminUserListItemResponse {
@@ -110,7 +111,7 @@ export interface AdminComplaintResponse {
     postId: number;
     slug: string;
     title: string | null;
-    status: PostStatus;
+    removedAt: Date | null;
   };
   processedByAdmin: {
     adminId: number;
@@ -344,7 +345,7 @@ export class AdminService {
         expiresAt: violation.expiresAt,
         adminId: violation.adminId,
         postId: violation.targetPostId,
-        postStatus: violation.targetPost.status,
+        postRemovedAt: violation.targetPost.removedAt,
       })),
     };
   }
@@ -401,6 +402,7 @@ export class AdminService {
         targetUserId: userId,
         status: ComplaintStatus.RESOLVED,
       },
+      relations: { targetPost: true },
     });
 
     if (!complaint) {
@@ -411,8 +413,19 @@ export class AdminService {
       throw new BadRequestException('Violation is already inactive.');
     }
 
+    const post = complaint.targetPost;
+    if (post.removedAt) {
+      const cleanupThreshold = new Date(Date.now() - POST_REMOVAL_CLEANUP_DAYS * 24 * 60 * 60 * 1000);
+      if (post.removedAt < cleanupThreshold) {
+        throw new BadRequestException('Post content has been permanently deleted and cannot be restored.');
+      }
+      await this.postsRepository.update(post.postId, { removedAt: null });
+    }
+
     complaint.expiresAt = new Date();
     await this.complaintsRepository.save(complaint);
+
+    await this.notificationsService.recordPostViolationRemoved(userId, post.postId, complaintId);
 
     const user = await this.usersRepository.findOne({
       where: { userId },
@@ -622,11 +635,6 @@ export class AdminService {
         .execute();
 
       await postsRepository.update(complaint.targetPostId, {
-        title: null,
-        description: null,
-        text: null,
-        originAuthorName: null,
-        status: PostStatus.REMOVED,
         removedAt: new Date(),
       });
 
@@ -686,8 +694,8 @@ export class AdminService {
         this.usersRepository.count(),
         this.usersRepository.count({ withDeleted: true, where: { blockedAt: Not(IsNull()) } }),
         this.postsRepository.count(),
-        this.postsRepository.count({ where: { status: PostStatus.PUBLISHED } }),
-        this.postsRepository.count({ where: { status: PostStatus.REMOVED } }),
+        this.postsRepository.count({ where: { status: PostStatus.PUBLISHED, removedAt: IsNull() } }),
+        this.postsRepository.count({ where: { removedAt: Not(IsNull()) } }),
         this.complaintsRepository.count(),
         this.complaintsRepository.count({ where: { status: ComplaintStatus.PENDING } }),
         this.complaintsRepository.count({ where: { status: ComplaintStatus.RESOLVED } }),
@@ -930,7 +938,7 @@ export class AdminService {
         postId: complaint.targetPost.postId,
         slug: complaint.targetPost.slug,
         title: complaint.targetPost.title,
-        status: complaint.targetPost.status,
+        removedAt: complaint.targetPost.removedAt,
       },
       processedByAdmin: complaint.admin
         ? {

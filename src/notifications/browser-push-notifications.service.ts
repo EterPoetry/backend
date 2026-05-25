@@ -283,6 +283,13 @@ export class BrowserPushNotificationsService {
           tag: `notification:${notification.notificationId}`,
           renotify: false,
         };
+      case NotificationType.POST_VIOLATION_REMOVED:
+        return {
+          title: 'Порушення знято',
+          body: 'Порушення на ваш пост було скасовано, і пост відновлено.',
+          tag: `notification:${notification.notificationId}`,
+          renotify: false,
+        };
     }
   }
 

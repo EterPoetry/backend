@@ -39,6 +39,7 @@ export class MetaService {
       where: {
         postId,
         status: PostStatus.PUBLISHED,
+        removedAt: IsNull(),
         author: { blockedAt: IsNull() },
       },
       relations: {

@@ -5,4 +5,5 @@ export enum NotificationType {
   COMMENT_LIKED = 'comment_liked',
   USER_FOLLOWED = 'user_followed',
   POST_VIOLATION_CONFIRMED = 'post_violation_confirmed',
+  POST_VIOLATION_REMOVED = 'post_violation_removed',
 }

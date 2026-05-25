@@ -120,6 +120,7 @@ export class SitemapService {
         FROM posts
         INNER JOIN users ON users.user_id = posts.author_id
         WHERE posts.status = $2
+          AND posts.removed_at IS NULL
           AND users.blocked_at IS NULL
       ) sub
       GROUP BY shard_num
@@ -176,7 +177,7 @@ export class SitemapService {
       .createQueryBuilder('post')
       .innerJoin('post.author', 'author', 'author.blocked_at IS NULL')
       .select(['post.postId', 'post.slug', 'post.updatedAt'])
-      .where('post.status = :status', { status: PostStatus.PUBLISHED })
+      .where('post.status = :status AND post.removed_at IS NULL', { status: PostStatus.PUBLISHED })
       .orderBy('post.postId', 'ASC')
       .skip(shard * this.shardSize)
       .take(this.shardSize)
@@ -221,7 +222,7 @@ export class SitemapService {
       .createQueryBuilder('post')
       .innerJoin('post.author', 'author', 'author.blocked_at IS NULL')
       .select(['post.postId', 'post.slug', 'post.updatedAt'])
-      .where('post.status = :status', { status: PostStatus.PUBLISHED })
+      .where('post.status = :status AND post.removed_at IS NULL', { status: PostStatus.PUBLISHED })
       .orderBy('post.postId', 'DESC')
       .take(this.recentPostsCount)
       .getMany();

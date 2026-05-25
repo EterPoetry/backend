@@ -102,7 +102,7 @@ const NOTIFICATION_TYPE_GROUPS: Record<Exclude<NotificationTypeFilter, 'mentions
   comments: [NotificationType.POST_COMMENTED, NotificationType.COMMENT_REPLIED],
   follows: [NotificationType.USER_FOLLOWED],
   likes: [NotificationType.POST_LIKED, NotificationType.COMMENT_LIKED],
-  system: [NotificationType.POST_VIOLATION_CONFIRMED],
+  system: [NotificationType.POST_VIOLATION_CONFIRMED, NotificationType.POST_VIOLATION_REMOVED],
 };
 
 @Injectable()
@@ -388,6 +388,22 @@ export class NotificationsService {
     await this.recordNotification({
       recipientUserId,
       notificationType: NotificationType.POST_VIOLATION_CONFIRMED,
+      postId,
+      postComplaintId,
+      sourcePostComplaintId: postComplaintId,
+      bucketSizeMinutes: 0,
+      groupByHour: false,
+    });
+  }
+
+  async recordPostViolationRemoved(
+    recipientUserId: number,
+    postId: number,
+    postComplaintId: number,
+  ): Promise<void> {
+    await this.recordNotification({
+      recipientUserId,
+      notificationType: NotificationType.POST_VIOLATION_REMOVED,
       postId,
       postComplaintId,
       sourcePostComplaintId: postComplaintId,
@@ -835,6 +851,7 @@ export class NotificationsService {
       case NotificationType.COMMENT_REPLIED:
         return 'comment';
       case NotificationType.POST_VIOLATION_CONFIRMED:
+      case NotificationType.POST_VIOLATION_REMOVED:
         return 'system';
       case NotificationType.POST_LIKED:
       case NotificationType.POST_COMMENTED:
@@ -850,6 +867,7 @@ export class NotificationsService {
       case NotificationType.COMMENT_REPLIED:
         return 'Your comment';
       case NotificationType.POST_VIOLATION_CONFIRMED:
+      case NotificationType.POST_VIOLATION_REMOVED:
         return 'System';
       case NotificationType.POST_LIKED:
       case NotificationType.POST_COMMENTED:

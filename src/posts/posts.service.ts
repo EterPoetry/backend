@@ -290,7 +290,7 @@ export class PostsService {
     const cursor = this.decodeFeedCursor(query.cursor);
 
     const queryBuilder = this.createPostDetailsQueryBuilder(userId)
-      .where('post.status = :feedStatus', { feedStatus: PostStatus.PUBLISHED })
+      .where('post.status = :feedStatus AND post.removed_at IS NULL', { feedStatus: PostStatus.PUBLISHED })
       .andWhere(
         `post.author_id IN (
           SELECT f.target_user_id
@@ -332,7 +332,7 @@ export class PostsService {
 
   async getLikedPosts(userId: number, query: GetLikedPostsQueryDto): Promise<PaginatedPostsResponse> {
     const queryBuilder = this.createPostDetailsQueryBuilder(userId)
-      .where('post.status = :likedFeedStatus', { likedFeedStatus: PostStatus.PUBLISHED })
+      .where('post.status = :likedFeedStatus AND post.removed_at IS NULL', { likedFeedStatus: PostStatus.PUBLISHED })
       .andWhere(
         `EXISTS (SELECT 1 FROM post_reactions pr WHERE pr.post_id = post.post_id AND pr.user_id = :likedByUserId AND pr.reaction_type = :reactionType)`,
         { likedByUserId: userId },
@@ -374,7 +374,7 @@ export class PostsService {
       .innerJoin(
         'posts',
         'post',
-        'post.post_id = snapshotItem.post_id AND post.status = :status',
+        'post.post_id = snapshotItem.post_id AND post.status = :status AND post.removed_at IS NULL',
         { status: PostStatus.PUBLISHED },
       )
       .where('snapshotItem.snapshot_id = :snapshotId', { snapshotId: snapshot.snapshotId })
@@ -450,7 +450,7 @@ export class PostsService {
     const rankingQueryBuilder = this.postsRepository
       .createQueryBuilder('post')
       .innerJoin('post.author', 'author', 'author.blocked_at IS NULL')
-      .where('post.status = :status', { status: PostStatus.PUBLISHED });
+      .where('post.status = :status AND post.removed_at IS NULL', { status: PostStatus.PUBLISHED });
 
     if (query.search?.trim()) {
       rankingQueryBuilder.andWhere(
@@ -728,7 +728,8 @@ export class PostsService {
         thresholdReached &&
         !lockedSession.isSuspicious &&
         (lockedSession.userId === null || post.authorId !== lockedSession.userId) &&
-        post.status === PostStatus.PUBLISHED
+        post.status === PostStatus.PUBLISHED &&
+        !post.removedAt
       ) {
         await this.acquireListenCooldownLock(manager, lockedSession);
 
@@ -799,7 +800,7 @@ export class PostsService {
       queryBuilder.andWhere('post.status IN (:...statuses)', { statuses: effectiveStatuses });
     }
 
-    queryBuilder.andWhere('post.status != :removedStatus', { removedStatus: PostStatus.REMOVED });
+    queryBuilder.andWhere('post.removedAt IS NULL');
 
     if (query.search?.trim()) {
       queryBuilder.andWhere(
@@ -913,7 +914,7 @@ export class PostsService {
           'commentAuthor',
           'commentAuthor.user_id = postComment.comment_author_id AND commentAuthor.blocked_at IS NULL',
         )
-        .where('post.status = :status', { status: PostStatus.PUBLISHED })
+        .where('post.status = :status AND post.removed_at IS NULL', { status: PostStatus.PUBLISHED })
         .andWhere(`post.created_at >= NOW() - INTERVAL '${POPULAR_POSTS_WINDOW_DAYS} days'`)
         .select('post.post_id', 'postId')
         .addSelect(
@@ -1130,7 +1131,7 @@ export class PostsService {
       throw new ForbiddenException('Post is still processing and cannot be edited.');
     }
 
-    if (post.status === PostStatus.REMOVED) {
+    if (post.removedAt !== null) {
       throw new ForbiddenException('Removed posts cannot be edited.');
     }
 
@@ -1287,7 +1288,7 @@ export class PostsService {
   async deletePost(postId: number, requesterUserId: number): Promise<void> {
     const post = await this.requireOwnedPost(postId, requesterUserId);
 
-    if (post.status === PostStatus.REMOVED) {
+    if (post.removedAt !== null) {
       throw new ForbiddenException('Removed posts cannot be deleted.');
     }
 
@@ -1438,7 +1439,7 @@ export class PostsService {
     requesterUserId: number | null = null,
   ) {
     const queryBuilder = this.createPostDetailsQueryBuilder(requesterUserId).where(
-      'post.status = :status',
+      'post.status = :status AND post.removed_at IS NULL',
       { status: PostStatus.PUBLISHED },
     );
 
@@ -1469,7 +1470,7 @@ export class PostsService {
       throw new ForbiddenException('You do not have access to this post.');
     }
 
-    if (post.status === PostStatus.REMOVED) {
+    if (post.removedAt !== null) {
       throw new ForbiddenException('Removed posts are read-only.');
     }
 
@@ -1481,6 +1482,7 @@ export class PostsService {
       where: {
         postId,
         status: PostStatus.PUBLISHED,
+        removedAt: IsNull(),
         author: { blockedAt: IsNull() },
       },
       relations: { author: true },
@@ -1488,6 +1490,7 @@ export class PostsService {
         authorId: true,
         postId: true,
         status: true,
+        removedAt: true,
       },
     });
 
@@ -1505,7 +1508,7 @@ export class PostsService {
       throw new NotFoundException('Post not found.');
     }
 
-    if (post.status === PostStatus.PUBLISHED || post.authorId === requesterUserId) {
+    if ((post.status === PostStatus.PUBLISHED && !post.removedAt) || post.authorId === requesterUserId) {
       return post;
     }
 
@@ -1875,7 +1878,7 @@ export class PostsService {
       throw new NotFoundException('Post not found.');
     }
 
-    if (post.status === PostStatus.REMOVED) {
+    if (post.removedAt !== null) {
       throw new NotFoundException('Post not found.');
     }
 

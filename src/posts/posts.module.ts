@@ -20,6 +20,7 @@ import { PostAudioStorageService } from './post-audio-storage.service';
 import { PostAudioTranscodingService } from './post-audio-transcoding.service';
 import { PostAudioProcessingQueueService } from './post-audio-processing-queue.service';
 import { PostAudioAnalysisService } from './post-audio-analysis.service';
+import { PostCleanupService } from './post-cleanup.service';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { PostAudioAnalysisService } from './post-audio-analysis.service';
     PostAudioTranscodingService,
     PostAudioAnalysisService,
     PostAudioProcessingQueueService,
+    PostCleanupService,
   ],
   exports: [TypeOrmModule, PostsService],
 })

@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, Repository } from 'typeorm';
+import { Brackets, IsNull, Repository } from 'typeorm';
 import { ComplaintStatus } from '../common/enums/complaint-status.enum';
 import { PostStatus } from '../common/enums/post-status.enum';
 import { PostComplaint } from '../complaints/entities/post-complaint.entity';
@@ -447,7 +447,7 @@ export class ProfileService {
     const [followersCount, followingCount, postsCount, currentViolationsCount] = await Promise.all([
       this.countActiveFollowers(user.userId),
       this.countActiveFollowing(user.userId),
-      this.postsRepository.countBy({ authorId: user.userId, status: PostStatus.PUBLISHED }),
+      this.postsRepository.countBy({ authorId: user.userId, status: PostStatus.PUBLISHED, removedAt: IsNull() }),
       this.countActiveViolations(user.userId),
     ]);
 
@@ -477,7 +477,7 @@ export class ProfileService {
     const [followersCount, followingCount, postsCount, isSubscribed] = await Promise.all([
       this.countActiveFollowers(user.userId),
       this.countActiveFollowing(user.userId),
-      this.postsRepository.countBy({ authorId: user.userId, status: PostStatus.PUBLISHED }),
+      this.postsRepository.countBy({ authorId: user.userId, status: PostStatus.PUBLISHED, removedAt: IsNull() }),
       requesterUserId === null ? Promise.resolve(false) : this.isFollowingActiveUser(requesterUserId, user.userId),
     ]);
 
