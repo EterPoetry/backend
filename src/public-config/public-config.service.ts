@@ -13,6 +13,7 @@ export interface SubscriptionConfig {
 export interface NotificationsConfig {
   webPushEnabled: boolean;
   webPushPublicKey: string | null;
+  androidPushEnabled: boolean;
 }
 
 export interface PublicConfigResponse {
@@ -52,6 +53,12 @@ export class PublicConfigService {
               this.getTrimmedConfigValue('MAILJET_SENDER_EMAIL')),
         ),
         webPushPublicKey: this.getTrimmedConfigValue('WEB_PUSH_VAPID_PUBLIC_KEY'),
+        androidPushEnabled: Boolean(
+          this.getTrimmedConfigValue('FIREBASE_SERVICE_ACCOUNT_JSON') ||
+            (this.getTrimmedConfigValue('FIREBASE_PROJECT_ID') &&
+              this.getTrimmedConfigValue('FIREBASE_CLIENT_EMAIL') &&
+              this.getTrimmedConfigValue('FIREBASE_PRIVATE_KEY')),
+        ),
       },
     };
   }

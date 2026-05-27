@@ -18,8 +18,10 @@ import {
 } from '@nestjs/swagger';
 import { ComplaintReason } from '../common/enums/complaint-reason.enum';
 import { Request } from 'express';
+import { SaveAndroidPushTokenDto } from './dto/save-android-push-token.dto';
 import { SaveBrowserPushSubscriptionDto } from './dto/save-browser-push-subscription.dto';
 import { UpdatePushSettingsDto } from './dto/update-push-settings.dto';
+import { AndroidPushNotificationsService } from './android-push-notifications.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { NotificationType } from './notification-type.enum';
 import { GetNotificationsQueryDto } from './dto/get-notifications-query.dto';
@@ -188,6 +190,7 @@ class UpdatePushSettingsResponseDto extends OkResponseDto implements UpdatePushS
 @Controller('notifications')
 export class NotificationsController {
   constructor(
+    private readonly androidPushNotificationsService: AndroidPushNotificationsService,
     private readonly notificationsService: NotificationsService,
     private readonly browserPushNotificationsService: BrowserPushNotificationsService,
   ) {}
@@ -245,6 +248,24 @@ export class NotificationsController {
     @Body() dto: SaveBrowserPushSubscriptionDto,
   ): Promise<OkResponseDto> {
     return this.browserPushNotificationsService.deleteSubscription(req.user.userId, dto.endpoint);
+  }
+
+  @ApiBody({ type: SaveAndroidPushTokenDto })
+  @Patch('android-push/tokens')
+  saveAndroidPushToken(
+    @Req() req: RequestWithUser,
+    @Body() dto: SaveAndroidPushTokenDto,
+  ): Promise<OkResponseDto> {
+    return this.androidPushNotificationsService.saveToken(req.user.userId, dto);
+  }
+
+  @ApiBody({ type: SaveAndroidPushTokenDto })
+  @Patch('android-push/tokens/delete')
+  deleteAndroidPushToken(
+    @Req() req: RequestWithUser,
+    @Body() dto: SaveAndroidPushTokenDto,
+  ): Promise<OkResponseDto> {
+    return this.androidPushNotificationsService.deleteToken(req.user.userId, dto.token);
   }
 
   @Get('push/settings')

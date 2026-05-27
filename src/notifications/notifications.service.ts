@@ -15,6 +15,7 @@ import {
   NotificationTypeFilter,
 } from './dto/get-notifications-query.dto';
 import { BrowserPushNotificationsService } from './browser-push-notifications.service';
+import { AndroidPushNotificationsService } from './android-push-notifications.service';
 import { NotificationEvent } from './entities/notification-event.entity';
 import { Notification } from './entities/notification.entity';
 import { NotificationsGateway } from './notifications.gateway';
@@ -116,6 +117,7 @@ export class NotificationsService {
     private readonly notificationsRepository: Repository<Notification>,
     @InjectRepository(NotificationEvent)
     private readonly notificationEventsRepository: Repository<NotificationEvent>,
+    private readonly androidPushNotificationsService: AndroidPushNotificationsService,
     private readonly browserPushNotificationsService: BrowserPushNotificationsService,
     private readonly notificationsGateway: NotificationsGateway,
   ) {}
@@ -514,7 +516,7 @@ export class NotificationsService {
       );
     });
 
-    void this.sendBrowserPushForGroupKey(input.recipientUserId, groupKey);
+    void this.dispatchPushForGroupKey(input.recipientUserId, groupKey);
   }
 
   private async removeNotificationEvents(
@@ -765,7 +767,7 @@ export class NotificationsService {
     };
   }
 
-  private async sendBrowserPushForGroupKey(
+  private async dispatchPushForGroupKey(
     recipientUserId: number,
     groupKey: string,
   ): Promise<void> {
@@ -801,12 +803,20 @@ export class NotificationsService {
 
       const mappedNotification = this.mapNotification(notification);
 
-      await this.browserPushNotificationsService.sendNotification(
-        recipientUserId,
-        mappedNotification,
-        unreadCount,
-        unseenCount,
-      );
+      await Promise.all([
+        this.androidPushNotificationsService.sendNotification(
+          recipientUserId,
+          mappedNotification,
+          unreadCount,
+          unseenCount,
+        ),
+        this.browserPushNotificationsService.sendNotification(
+          recipientUserId,
+          mappedNotification,
+          unreadCount,
+          unseenCount,
+        ),
+      ]);
 
       this.notificationsGateway.emitNotificationReceived(recipientUserId, {
         notification: mappedNotification,

@@ -20,6 +20,7 @@ import { Admin } from '../admin/entities/admin.entity';
 import { AdminRefreshToken } from '../admin/entities/admin-refresh-token.entity';
 import { PostComplaint } from '../complaints/entities/post-complaint.entity';
 import { Follower } from '../followers/entities/follower.entity';
+import { AndroidPushToken } from '../notifications/entities/android-push-token.entity';
 import { BrowserPushSubscription } from '../notifications/entities/browser-push-subscription.entity';
 import { PushNotificationSettings } from '../notifications/entities/push-notification-settings.entity';
 import { Notification } from '../notifications/entities/notification.entity';
@@ -50,6 +51,7 @@ export const ENTITIES = [
   AdminRefreshToken,
   PostComplaint,
   Follower,
+  AndroidPushToken,
   BrowserPushSubscription,
   PushNotificationSettings,
   Notification,

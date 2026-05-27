@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AndroidPushNotificationsService } from './android-push-notifications.service';
+import { AndroidPushToken } from './entities/android-push-token.entity';
 import { BrowserPushSubscription } from './entities/browser-push-subscription.entity';
 import { PushNotificationSettings } from './entities/push-notification-settings.entity';
 import { BrowserPushNotificationsService } from './browser-push-notifications.service';
@@ -10,10 +12,17 @@ import { Notification } from './entities/notification.entity';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationsService } from './notifications.service';
+import { PushNotificationContentService } from './push-notification-content.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([BrowserPushSubscription, PushNotificationSettings, Notification, NotificationEvent]),
+    TypeOrmModule.forFeature([
+      AndroidPushToken,
+      BrowserPushSubscription,
+      PushNotificationSettings,
+      Notification,
+      NotificationEvent,
+    ]),
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
@@ -22,7 +31,18 @@ import { NotificationsService } from './notifications.service';
     }),
   ],
   controllers: [NotificationsController],
-  providers: [BrowserPushNotificationsService, NotificationsGateway, NotificationsService],
-  exports: [TypeOrmModule, BrowserPushNotificationsService, NotificationsService],
+  providers: [
+    AndroidPushNotificationsService,
+    BrowserPushNotificationsService,
+    NotificationsGateway,
+    NotificationsService,
+    PushNotificationContentService,
+  ],
+  exports: [
+    TypeOrmModule,
+    AndroidPushNotificationsService,
+    BrowserPushNotificationsService,
+    NotificationsService,
+  ],
 })
 export class NotificationsModule {}

@@ -25,6 +25,9 @@ class NotificationsConfigDto implements NotificationsConfig {
 
   @ApiProperty({ nullable: true })
   webPushPublicKey: string | null;
+
+  @ApiProperty()
+  androidPushEnabled: boolean;
 }
 
 class PublicConfigResponseDto implements PublicConfigResponse {
