@@ -83,7 +83,6 @@ export interface AdminUserDetailsResponse extends AdminUserListItemResponse {
 export interface AdminCategoryResponse {
   categoryId: number;
   categoryName: string;
-  categoryDescription: string | null;
   postsCount: number;
 }
 
@@ -456,7 +455,6 @@ export class AdminService {
       .select([
         'category.category_id AS "categoryId"',
         'category.category_name AS "categoryName"',
-        'category.category_description AS "categoryDescription"',
       ])
       .addSelect(
         '(SELECT COUNT(*)::int FROM post_categories postCategory WHERE postCategory.category_id = category.category_id)',
@@ -464,10 +462,7 @@ export class AdminService {
       );
 
     if (query.search?.trim()) {
-      queryBuilder.where(
-        '(category.category_name ILIKE :search OR COALESCE(category.category_description, \'\') ILIKE :search)',
-        { search: `%${query.search.trim()}%` },
-      );
+      queryBuilder.where('category.category_name ILIKE :search', { search: `%${query.search.trim()}%` });
     }
 
     const sortColumn =
@@ -478,7 +473,6 @@ export class AdminService {
     const rows = await queryBuilder.offset(query.offset).limit(query.limit).getRawMany<{
       categoryId: string;
       categoryName: string;
-      categoryDescription: string | null;
       postsCount: string;
     }>();
 
@@ -486,7 +480,6 @@ export class AdminService {
       items: rows.map((row) => ({
         categoryId: Number(row.categoryId),
         categoryName: row.categoryName,
-        categoryDescription: row.categoryDescription,
         postsCount: Number(row.postsCount ?? 0),
       })),
       total,
@@ -501,14 +494,12 @@ export class AdminService {
     const category = await this.categoriesRepository.save(
       this.categoriesRepository.create({
         categoryName: dto.categoryName.trim(),
-        categoryDescription: this.normalizeNullableText(dto.categoryDescription),
       }),
     );
 
     return {
       categoryId: category.categoryId,
       categoryName: category.categoryName,
-      categoryDescription: category.categoryDescription,
       postsCount: 0,
     };
   }
@@ -524,17 +515,12 @@ export class AdminService {
       category.categoryName = dto.categoryName.trim();
     }
 
-    if (dto.categoryDescription !== undefined) {
-      category.categoryDescription = this.normalizeNullableText(dto.categoryDescription);
-    }
-
     const savedCategory = await this.categoriesRepository.save(category);
     const postsCount = await this.postCategoriesRepository.countBy({ categoryId });
 
     return {
       categoryId: savedCategory.categoryId,
       categoryName: savedCategory.categoryName,
-      categoryDescription: savedCategory.categoryDescription,
       postsCount,
     };
   }
@@ -886,15 +872,6 @@ export class AdminService {
 
   private getViolationExpiryDate(): Date {
     return new Date(Date.now() + DEFAULT_VIOLATION_DURATION_DAYS * 24 * 60 * 60 * 1000);
-  }
-
-  private normalizeNullableText(value: string | null | undefined): string | null {
-    if (value === undefined || value === null) {
-      return null;
-    }
-
-    const normalizedValue = value.trim();
-    return normalizedValue.length > 0 ? normalizedValue : null;
   }
 
   private async ensureCategoryNameIsAvailable(

@@ -64,7 +64,6 @@ export interface PostAuthorProfileResponse {
 export interface CategoryResponse {
   categoryId: number;
   categoryName: string;
-  categoryDescription: string | null;
 }
 
 export interface PostResponse {
@@ -1306,10 +1305,7 @@ export class PostsService {
       .orderBy('category.category_name', 'ASC');
 
     if (query.search?.trim()) {
-      queryBuilder.where(
-        `(category.category_name ILIKE :search OR COALESCE(category.category_description, '') ILIKE :search)`,
-        { search: `%${query.search.trim()}%` },
-      );
+      queryBuilder.where('category.category_name ILIKE :search', { search: `%${query.search.trim()}%` });
     }
 
     const categories = await queryBuilder.getMany();
@@ -1606,7 +1602,6 @@ export class PostsService {
     return {
       categoryId: category.categoryId,
       categoryName: category.categoryName,
-      categoryDescription: category.categoryDescription,
     };
   }
 

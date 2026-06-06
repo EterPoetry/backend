@@ -136,8 +136,6 @@ class AdminCategoryResponseDto implements AdminCategoryResponse {
   categoryId: number;
   @ApiProperty()
   categoryName: string;
-  @ApiPropertyOptional({ nullable: true })
-  categoryDescription: string | null;
   @ApiProperty()
   postsCount: number;
 }

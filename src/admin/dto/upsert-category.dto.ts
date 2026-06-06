@@ -7,12 +7,6 @@ export class CreateAdminCategoryDto {
   @MinLength(1)
   @MaxLength(120)
   categoryName: string;
-
-  @ApiPropertyOptional({ nullable: true })
-  @IsOptional()
-  @IsString()
-  @MaxLength(5000)
-  categoryDescription?: string | null;
 }
 
 export class UpdateAdminCategoryDto {
@@ -22,10 +16,4 @@ export class UpdateAdminCategoryDto {
   @MinLength(1)
   @MaxLength(120)
   categoryName?: string;
-
-  @ApiPropertyOptional({ nullable: true })
-  @IsOptional()
-  @IsString()
-  @MaxLength(5000)
-  categoryDescription?: string | null;
 }

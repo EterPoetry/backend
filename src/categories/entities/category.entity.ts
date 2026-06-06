@@ -9,9 +9,6 @@ export class Category {
   @Column({ name: 'category_name', type: 'varchar', length: 120, unique: true })
   categoryName: string;
 
-  @Column({ name: 'category_description', type: 'text', nullable: true })
-  categoryDescription: string | null;
-
   @OneToMany(() => PostCategory, (postCategory) => postCategory.category)
   postCategories: PostCategory[];
 }

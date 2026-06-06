@@ -82,9 +82,6 @@ class CategoryResponseDto implements CategoryResponse {
 
   @ApiProperty()
   categoryName: string;
-
-  @ApiPropertyOptional({ nullable: true })
-  categoryDescription: string | null;
 }
 
 class CommentAuthorResponseDto implements CommentAuthorResponse {
