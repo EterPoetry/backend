@@ -1122,10 +1122,6 @@ export class PostsService {
       post.originAuthorName = dto.originAuthorName;
     }
 
-    if (dto.audioFileName !== undefined) {
-      post.audioFileName = dto.audioFileName;
-    }
-
     if (post.status === PostStatus.PROCESSING) {
       throw new ForbiddenException('Post is still processing and cannot be edited.');
     }
@@ -1150,13 +1146,9 @@ export class PostsService {
         updatePayload.text = normalizedText;
       }
 
-      if (dto.originAuthorName !== undefined) {
-        updatePayload.originAuthorName = dto.originAuthorName;
-      }
-
-      if (dto.audioFileName !== undefined) {
-        updatePayload.audioFileName = dto.audioFileName;
-      }
+    if (dto.originAuthorName !== undefined) {
+      updatePayload.originAuthorName = dto.originAuthorName;
+    }
 
       if (dto.categoryIds !== undefined) {
         await this.syncPostCategories(manager, post.postId, dto.categoryIds);

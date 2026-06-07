@@ -36,12 +36,6 @@ export class UpdatePostDto {
   @MaxLength(200)
   originAuthorName?: string;
 
-  @ApiPropertyOptional({ maxLength: 300 })
-  @IsOptional()
-  @IsString()
-  @MaxLength(300)
-  audioFileName?: string;
-
   @ApiPropertyOptional({ type: [Number], maxItems: 3 })
   @IsOptional()
   @Transform(({ value }) => {
