@@ -661,7 +661,7 @@ export class PostsService {
 
     const updatedSession = await this.applyListenProgress(
       session,
-      this.normalizePosition(positionMs, session.trackDurationMs),
+      positionMs,
       new Date(),
     );
 
@@ -688,7 +688,7 @@ export class PostsService {
     const now = new Date();
     const updatedSession = await this.applyListenProgress(
       session,
-      this.normalizePosition(positionMs, session.trackDurationMs),
+      positionMs,
       now,
     );
 
@@ -714,6 +714,7 @@ export class PostsService {
           postId: true,
           authorId: true,
           status: true,
+          removedAt: true,
         },
       });
       if (!post) {
@@ -1993,15 +1994,16 @@ export class PostsService {
     positionMs: number,
     now: Date,
   ): Promise<PostListenSession> {
+    if (positionMs > session.trackDurationMs + LISTEN_POSITION_OVERSHOOT_MS) {
+      return this.markListenSessionSuspicious(session, 'position_out_of_range', now);
+    }
+
+    const normalizedPositionMs = this.normalizePosition(positionMs, session.trackDurationMs);
     const elapsedRealMs = session.lastProgressAt
       ? Math.max(0, now.getTime() - session.lastProgressAt.getTime())
       : null;
     const previousPositionMs = session.lastPositionMs ?? 0;
-    const deltaPositionMs = positionMs - previousPositionMs;
-
-    if (positionMs > session.trackDurationMs + LISTEN_POSITION_OVERSHOOT_MS) {
-      return this.markListenSessionSuspicious(session, 'position_out_of_range', now);
-    }
+    const deltaPositionMs = normalizedPositionMs - previousPositionMs;
 
     const advancedTooFast =
       elapsedRealMs !== null &&
@@ -2029,7 +2031,7 @@ export class PostsService {
     const listenedRanges = this.getNormalizedListenedRanges(session);
     const shouldCreditProgress = deltaPositionMs > 0 && !advancedTooFast;
     const creditedEndMs = shouldCreditProgress
-      ? Math.min(positionMs, session.trackDurationMs)
+      ? Math.min(normalizedPositionMs, session.trackDurationMs)
       : null;
     const updatedRanges =
       creditedEndMs !== null
@@ -2042,8 +2044,8 @@ export class PostsService {
     await this.postListenSessionsRepository.update(session.postListenSessionId, {
       listenedMs: this.getTotalListenedMs(updatedRanges),
       listenedRanges: updatedRanges,
-      maxPositionMs: Math.max(session.maxPositionMs, positionMs),
-      lastPositionMs: positionMs,
+      maxPositionMs: Math.max(session.maxPositionMs, normalizedPositionMs),
+      lastPositionMs: normalizedPositionMs,
       lastProgressAt: now,
       consecutiveAnomalyCount,
     });
@@ -2093,7 +2095,7 @@ export class PostsService {
 
     const fallbackEndMs = Math.min(
       session.trackDurationMs,
-      Math.max(session.listenedMs, session.maxPositionMs),
+      session.listenedMs,
     );
     if (fallbackEndMs <= 0) {
       return [];
