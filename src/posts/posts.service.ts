@@ -1858,6 +1858,7 @@ export class PostsService {
         authorId: true,
         status: true,
         audioDurationSeconds: true,
+        removedAt: true,
       },
     });
 
